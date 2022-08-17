@@ -32,7 +32,6 @@ void writeErrorAndExit(const char (&message)[message_length], int exitCode) noex
 
 // COMMAND-LINE PARSER START ---------------------------------------------------
 
-// TODO: reverse
 enum class IPVersionConstraint : uint8_t {
 	NONE,
 	FOUR,
@@ -51,6 +50,18 @@ namespace flags {
 	bool shouldBroadcast = false;
 
 	bool shouldUseUDP = false;
+}
+
+uint16_t parseSourcePort(const char* portString) noexcept {
+	if (portString[0] == '\0') { REPORT_ERROR_AND_EXIT("source port input string cannot be empty", EXIT_SUCCESS); }
+	uint16_t result = portString[0] - '0';
+	if (result < 0 || result > 9) { REPORT_ERROR_AND_EXIT("source port input string is invalid", EXIT_SUCCESS); }
+	for (size_t i = 0; portString[i] != '\0'; i++) {
+		unsigned char digit = portString[i] - '0';
+		if (digit < 0 || digit > 9) { REPORT_ERROR_AND_EXIT("source port input string is invalid", EXIT_SUCCESS); }
+		result = result * 10 + digit;
+	}
+	return result;
 }
 
 void parseLetterFlags(const char* flagContent) noexcept {
@@ -106,7 +117,8 @@ int manageArgs(int argc, const char* const * argv) noexcept {
 						continue;
 					}
 					if (std::strcmp(flagContent, "port") == 0) {
-						// TODO: parse source port
+						i++;
+						flags::sourcePort = parseSourcePort(argv[i]);
 						continue;
 					}
 					if (std::strcmp(flagContent, "help") == 0) {
@@ -124,8 +136,17 @@ int manageArgs(int argc, const char* const * argv) noexcept {
 		if (normalArgIndex != 0) { REPORT_ERROR_AND_EXIT("too many non-flag args", EXIT_SUCCESS); }
 		normalArgIndex = i;
 	}
-	if (flags::textAttachmentLocation == AttachmentLocation::none) { REPORT_ERROR_AND_EXIT("you must specify either --front or --back", EXIT_SUCCESS); }
-	if (normalArgIndex == 0 && flags::extraByte == -1) { REPORT_ERROR_AND_EXIT("not enough non-flags args", EXIT_SUCCESS); }
+
+	if (flags::shouldBroadcast) {
+		if (!flags::shouldUseUDP) { REPORT_ERROR_AND_EXIT("\"-b\" cannot be specified without \"-u\"", EXIT_SUCCESS); }
+	}
+
+	if (!flags::shouldListen) {
+		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
+		if (flags::shouldBroadcast) { REPORT_ERROR_AND_EXIT("\"-b\" cannot be specified with \"-l\"", EXIT_SUCCESS); }
+	}
+
+	if (normalArgIndex == 0) { REPORT_ERROR_AND_EXIT("not enough non-flags args", EXIT_SUCCESS); }
 	return normalArgIndex;
 }
 
