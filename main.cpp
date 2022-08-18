@@ -39,7 +39,7 @@ enum class IPVersionConstraint : uint8_t {
 };
 
 namespace flags {
-	uint32_t sourceIP;
+	const char* sourceIP;
 	uint16_t sourcePort;
 
 	IPVersionConstraint IPVersionConstraint = IPVersionConstraint::NONE;
@@ -52,13 +52,18 @@ namespace flags {
 	bool shouldUseUDP = false;
 }
 
-uint16_t parseSourcePort(const char* portString) noexcept {
-	if (portString[0] == '\0') { REPORT_ERROR_AND_EXIT("source port input string cannot be empty", EXIT_SUCCESS); }
+namespace arguments {
+	const char* destinationIP;
+	uint16_t destinationPort;
+}
+
+uint16_t parsePort(const char* portString) noexcept {
+	if (portString[0] == '\0') { REPORT_ERROR_AND_EXIT("port input string cannot be empty", EXIT_SUCCESS); }
 	uint16_t result = portString[0] - '0';
-	if (result < 0 || result > 9) { REPORT_ERROR_AND_EXIT("source port input string is invalid", EXIT_SUCCESS); }
+	if (result < 0 || result > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
 	for (size_t i = 0; portString[i] != '\0'; i++) {
 		unsigned char digit = portString[i] - '0';
-		if (digit < 0 || digit > 9) { REPORT_ERROR_AND_EXIT("source port input string is invalid", EXIT_SUCCESS); }
+		if (digit < 0 || digit > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
 		result = result * 10 + digit;
 	}
 	return result;
@@ -103,8 +108,8 @@ void parseLetterFlags(const char* flagContent) noexcept {
 	}
 }
 
-int manageArgs(int argc, const char* const * argv) noexcept {
-	int normalArgIndex = 0;
+void manageArgs(int argc, const char* const * argv) noexcept {
+	unsigned char normalArgCount = 0;
 	for (int i = 1; i < argc; i++) {
 		if (argv[i][0] == '-') {
 			const char* flagContent = argv[i] + 1;
@@ -113,12 +118,13 @@ int manageArgs(int argc, const char* const * argv) noexcept {
 				{
 					flagContent++;
 					if (std::strcmp(flagContent, "source") == 0) {
-						// TODO: parse source IP
+						i++;
+						flags::sourceIP = argv[i];
 						continue;
 					}
 					if (std::strcmp(flagContent, "port") == 0) {
 						i++;
-						flags::sourcePort = parseSourcePort(argv[i]);
+						flags::sourcePort = parsePort(argv[i]);
 						continue;
 					}
 					if (std::strcmp(flagContent, "help") == 0) {
@@ -133,8 +139,12 @@ int manageArgs(int argc, const char* const * argv) noexcept {
 			default: parseLetterFlags(flagContent);
 			}
 		}
-		if (normalArgIndex != 0) { REPORT_ERROR_AND_EXIT("too many non-flag args", EXIT_SUCCESS); }
-		normalArgIndex = i;
+		switch (normalArgCount) {
+		case 0: arguments::destinationIP = argv[i]; break;
+		case 1: arguments::destinationPort = parsePort(argv[i]); break;
+		default: REPORT_ERROR_AND_EXIT("too many non-flag args", EXIT_SUCCESS);
+		}
+		normalArgCount++;
 	}
 
 	if (flags::shouldBroadcast) {
@@ -146,38 +156,48 @@ int manageArgs(int argc, const char* const * argv) noexcept {
 		if (flags::shouldBroadcast) { REPORT_ERROR_AND_EXIT("\"-b\" cannot be specified with \"-l\"", EXIT_SUCCESS); }
 	}
 
-	if (normalArgIndex == 0) { REPORT_ERROR_AND_EXIT("not enough non-flags args", EXIT_SUCCESS); }
-	return normalArgIndex;
+	if (normalArgCount < 2) { REPORT_ERROR_AND_EXIT("not enough non-flags args", EXIT_SUCCESS); }
 }
 
 // COMMAND-LINE PARSER END -----------------------------------------------------
 
 // MAIN LOGIC START ------------------------------------------------------------
 
-void append(const char* text) noexcept {
-	openFloodGates();
-	if (text != nullptr && write(STDOUT_FILENO, text, std::strlen(text)) == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
-	if (flags::extraByte != -1) {
-		unsigned char byte = flags::extraByte;
-		if (write(STDOUT_FILENO, &byte, sizeof(byte)) == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
+void do_data_transfer_over_connection() noexcept {
+	while (true) {
+		NetworkShepherd::read();// TODO: etc...
+		NetworkShepherd::write();
 	}
+
+	NetworkShepherd::closeConnection();
 }
 
-void prepend(const char* text) noexcept {
-	if (flags::extraByte != -1) {
-		unsigned char byte = flags::extraByte;
-		if (write(STDOUT_FILENO, &byte, sizeof(byte)) == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
-	}
-	if (text != nullptr && write(STDOUT_FILENO, text, std::strlen(text)) == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
-	openFloodGates();
+void accept_and_handle_connection() noexcept {
+	NetworkShepherd::accept();
 }
 
 int main(int argc, const char* const * argv) noexcept {
-	int textIndex = manageArgs(argc, argv);
-	switch (flags::textAttachmentLocation) {
-	case AttachmentLocation::front: prepend(textIndex == 0 ? nullptr : argv[textIndex]); return EXIT_SUCCESS;
-	case AttachmentLocation::back: append(textIndex == 0 ? nullptr : argv[textIndex]); return EXIT_SUCCESS;
+	manageArgs(argc, argv);
+
+	// TODO: Make NetworkShepherd a singleton and have it cleanly clean up everything on destruction.
+	// TODO: This will happen even when we do REPORT_ERROR_AND_EXIT, which makes this program super super friendly and clean, very nice!
+	NetworkShepherd::init();	// TODO: Obviously handle errors eventually.
+
+	if (flags::shouldListen) {
+		NetworkShepherd::listen(arguments::destinationIP, arguments::destinationPort);
+
+		if (flags::shouldKeepListening) {
+			while (true) { accept_and_handle_connection(); }
+			return 0;	// TODO: Safely dispose of NetworkShepherd.
+		}
+		accept_and_handle_connection();
+
+		return 0;
 	}
+
+	NetworkShepherd::connect(arguments::destinationIP, arguments::destinationPort);
+
+	do_data_transfer_over_connection();
 }
 
 // MAIN LOGIC END --------------------------------------------------------------
