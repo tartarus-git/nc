@@ -1,5 +1,7 @@
-#include <cstdlib>	// for std::exit(), EXIT_SUCCESS and EXIT_FAILURE, as well as every other syscall we use
-#include <cstdint>
+#include <cstdlib>	// for EXIT_SUCCESS and EXIT_FAILURE, as well as every syscall we use
+#include <cstdint>	// for fixed-width integer types
+
+#include "error_reporting.h"
 
 const char helpText[] = "usage: nc [-46lkbu] [--source <source> || --port <source-port>] [<address> <port>]\n" \
 			"       nc --help\n" \
@@ -17,18 +19,6 @@ const char helpText[] = "usage: nc [-46lkbu] [--source <source> || --port <sourc
 				"\t[--port <source-port>] --> (only valid without -l) send from <source-port>\n" \
 				"\t[<address>]            --> send to <address> or (with -l) listen on <address> (can be IP/hostname/interface)\n" \
 				"\t[<port>]               --> send to <port> or (with -l) listen on <port>\n";
-
-// ERROR OUTPUT SYSTEM BEGIN -------------------------------------------------
-
-template <size_t message_length>
-void writeErrorAndExit(const char (&message)[message_length], int exitCode) noexcept {
-	write(STDERR_FILENO, message, message_length);
-	std::exit(exitCode);
-}
-
-#define REPORT_ERROR_AND_EXIT(message, exitCode) writeErrorAndExit("ERROR: " message "\n", exitCode)
-
-// ERROR OUTPUT SYSTEM END ----------------------------------------------------
 
 // COMMAND-LINE PARSER START ---------------------------------------------------
 
@@ -72,6 +62,11 @@ uint16_t parsePort(const char* portString) noexcept {
 void parseLetterFlags(const char* flagContent) noexcept {
 	for (size_t i = 0; flagContent[i] != '\0'; i++) {
 		switch (flagContent[i]) {
+			// TODO: Can you listen on an ipv6 addr and receive ipv4 traffic? Yes you can actually.
+			// TODO: That means you need to throw error when -4 is specified and the address is an ipv6 address for example.
+			// No you don't, you only need to throw an error when an ipv4 address is specified and -6 is used, because that really isn't possible.
+			// Accepting ipv4 connections on ipv6 listeners works, there is more to it though and the cross-platform stuff is something you have to be wary
+			// of.
 			case '4':
 				if (flags::IPVersionConstraint != IPVersionConstraint::NONE) {
 					REPORT_ERROR_AND_EXIT("more than one IP version constraint specified", EXIT_SUCCESS);
@@ -103,7 +98,6 @@ void parseLetterFlags(const char* flagContent) noexcept {
 				}
 				flags::shouldUseUDP = true;
 			default: REPORT_ERROR_AND_EXIT("one or more invalid flags specified", EXIT_SUCCESS);
-				 // TODO: program in the contraints on the flags, like the fact that k only works with l and so on.
 		}
 	}
 }
@@ -155,6 +149,7 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
 		if (flags::shouldBroadcast) { REPORT_ERROR_AND_EXIT("\"-b\" cannot be specified with \"-l\"", EXIT_SUCCESS); }
 	}
+	// TODO: Order the above checks to make the most sense efficiency and probability-wise and rethink which tests you want to nest and double-check and such.
 
 	if (normalArgCount < 2) { REPORT_ERROR_AND_EXIT("not enough non-flags args", EXIT_SUCCESS); }
 }
@@ -165,15 +160,15 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 
 void do_data_transfer_over_connection() noexcept {
 	while (true) {
-		NetworkShepherd::read();// TODO: etc...
-		NetworkShepherd::write();
+		NetworkShepherd.read();// TODO: etc...
+		NetworkShepherd.write();
 	}
 
-	NetworkShepherd::closeConnection();
+	NetworkShepherd.closeConnection();
 }
 
 void accept_and_handle_connection() noexcept {
-	NetworkShepherd::accept();
+	NetworkShepherd.accept();
 }
 
 int main(int argc, const char* const * argv) noexcept {
@@ -181,10 +176,10 @@ int main(int argc, const char* const * argv) noexcept {
 
 	// TODO: Make NetworkShepherd a singleton and have it cleanly clean up everything on destruction.
 	// TODO: This will happen even when we do REPORT_ERROR_AND_EXIT, which makes this program super super friendly and clean, very nice!
-	NetworkShepherd::init();	// TODO: Obviously handle errors eventually.
+	NetworkShepherd.init();	// TODO: Obviously handle errors eventually.
 
 	if (flags::shouldListen) {
-		NetworkShepherd::listen(arguments::destinationIP, arguments::destinationPort);
+		NetworkShepherd.listen(arguments::destinationIP, arguments::destinationPort);
 
 		if (flags::shouldKeepListening) {
 			while (true) { accept_and_handle_connection(); }
@@ -195,7 +190,7 @@ int main(int argc, const char* const * argv) noexcept {
 		return 0;
 	}
 
-	NetworkShepherd::connect(arguments::destinationIP, arguments::destinationPort);
+	NetworkShepherd.connect(arguments::destinationIP, arguments::destinationPort);
 
 	do_data_transfer_over_connection();
 }
