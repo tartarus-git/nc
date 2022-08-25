@@ -10,17 +10,23 @@ sockaddr construct_sockaddr(const char* address, uint16_t port) noexcept {
 
 	if (resolve_interfaces_instead_of_hostnames) {
 		struct ifaddrs* interfaceAddresses;
+
 		if (getifaddrs(&interfaceAddresses) != -1) {
+
 			for (struct ifaddrs* addr = interfaceAddresses; addr->ifa_next != nullptr; addr = info->ifa_next) {
 				if (std::strcmp(addr->ifa_name, address) == 0) {
 					struct result_sockaddr = addr->ifa_addr;
 					result_sockaddr.port = htons(port);
+
 					freeifaddrs(interfaceAddresses);
+
 					return result_sockaddr;
 				}
 			}
+
 			freeifaddrs(interfaceAddresses);
 		}
+
 		addressRetrievalHint.ai_flags |= AI_NUMERICHOST;
 	}
 
@@ -39,11 +45,13 @@ sockaddr construct_sockaddr(const char* address, uint16_t port) noexcept {
 		if (info->ai_family == AF_INET6 || info->ai_family == AF_INET) {
 			struct sockaddr result_sockaddr = info->ai_addr;
 			result_sockaddr.port = htons(port);
+
 			freeaddrinfo(addressInfo);
+
 			return result_sockaddr;
 		}
 	}
-	REPORT_ERROR_AND_EXIT("hostname does not possess any IP addresses", EXIT_SUCCESS);
+	REPORT_ERROR_AND_EXIT("hostname does not posess any IP addresses", EXIT_SUCCESS);
 }
 
 void NetworkShepherd_Class::init() noexcept { }
