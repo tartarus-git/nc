@@ -136,6 +136,9 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 	if (!flags::shouldListen) {
 		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
 	}
+	if (flags::shouldKeepListening) {
+		if (flags::shouldUseUDP) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified with \"-u\"", EXIT_SUCCESS); }
+	}
 	// TODO: Order the above checks to make the most sense efficiency and probability-wise and rethink which tests you want to nest and double-check and such.
 }
 
@@ -143,17 +146,34 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 
 // MAIN LOGIC START ------------------------------------------------------------
 
-void do_TCP_data_transfer_over_connection() noexcept {
+void networkRead_sub_transfer() noexcept {
+	char buffer[BUFSIZ];
 	while (true) {
-		NetworkShepherd.read();// TODO: etc...
-		NetworkShepherd.write();
+		ssize_t bytesRead = NetworkShepherd.read(buffer, sizeof(buffer));
+		while (true) {
+			ssize_t bytesWritten = write(buffer, bytesRead);
+			if (bytesWritten == -1) {
+				// TODO: report error and such
+			}
+			if (bytesWritten == bytesRead) { break; }
+			bytesRead -= bytesWritten;
+		}
 	}
-
-	NetworkShepherd.closeConnection();
 }
 
-void do_UDP_data_transfer_over_connection() noexcept {
-	// TODO: etc...
+void do_data_transfer_over_connection() noexcept {
+	std::thread networkReadThread(networkRead_sub_transfer);
+	networkReadThread.start();
+
+	char buffer[BUFSIZ];
+	while (true) {
+		ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer));
+		NetworkShepherd.write(buffer, bytesRead);
+	}
+
+	networkReadThread.join();
+
+	NetworkShepherd.closeConnection();
 }
 
 void accept_and_handle_connection() noexcept {
@@ -168,6 +188,10 @@ int main(int argc, const char* const * argv) noexcept {
 	// TODO: Put in the source port stuff, I assume you use setsockopt for that.
 
 	if (flags::shouldListen) {
+		if (flags::shouldUseUDP) {
+			// TODO: Use new data transfer function that only receives.
+		}
+
 		NetworkShepherd.listen(arguments::destinationIP, arguments::destinationPort);
 
 		if (flags::shouldKeepListening) {
@@ -182,7 +206,7 @@ int main(int argc, const char* const * argv) noexcept {
 	if (flags::shouldUseUDP) {
 		NetworkShepherd.createUDPSender(arguments::destinationIP, arguments::destinationPort);
 
-		do_UDP_data_transfer_over_connection();
+		// TODO: Use new data transfer function that only sends.
 
 		return 0;
 	}
