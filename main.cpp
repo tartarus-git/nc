@@ -13,7 +13,6 @@ const char helpText[] = "usage: nc [-46lkbu] [--source <source> || --port <sourc
 				"\t[-4 || -6]             --> force data transfer over IPv6/IPv4 (default: prefer IPv6)\n" \
 				"\t[-l]                   --> listen for connections on <address> and <port>\n" \
 				"\t[-k]                   --> (only valid with -l) keep listening after connection terminates\n" \
-				"\t[-b]                   --> (only valid without -l) broadcast to entire network (leave out [<address> <port>])\n" \
 				"\t[-u]                   --> use UDP (default: TCP)\n" \
 				"\t[--source <source>]    --> (only valid without -l) send from <source> (can be IP/interface)\n" \
 				"\t[--port <source-port>] --> (only valid without -l) send from <source-port>\n" \
@@ -36,8 +35,6 @@ namespace flags {
 
 	bool shouldListen = false;
 	bool shouldKeepListening = false;
-
-	bool shouldBroadcast = false;
 
 	bool shouldUseUDP = false;
 }
@@ -87,11 +84,6 @@ void parseLetterFlags(const char* flagContent) noexcept {
 					REPORT_ERROR_AND_EXIT("\"-k\" flag specified more than once", EXIT_SUCCESS);
 				}
 				flags::shouldKeepListening = true;
-			case 'b':
-				if (flags::shouldBroadcast) {
-					REPORT_ERROR_AND_EXIT("\"-b\" flag specified more than once", EXIT_SUCCESS);
-				}
-				flags::shouldBroadcast = true;
 			case 'u':
 				if (flags::shouldUseUDP) {
 					REPORT_ERROR_AND_EXIT("\"-u\" flag used more than once", EXIT_SUCCESS);
@@ -141,30 +133,27 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 		normalArgCount++;
 	}
 
-	if (flags::shouldBroadcast) {
-		if (!flags::shouldUseUDP) { REPORT_ERROR_AND_EXIT("\"-b\" cannot be specified without \"-u\"", EXIT_SUCCESS); }
-	}
-
 	if (!flags::shouldListen) {
 		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
-		if (flags::shouldBroadcast) { REPORT_ERROR_AND_EXIT("\"-b\" cannot be specified with \"-l\"", EXIT_SUCCESS); }
 	}
 	// TODO: Order the above checks to make the most sense efficiency and probability-wise and rethink which tests you want to nest and double-check and such.
-
-	if (normalArgCount < 2) { REPORT_ERROR_AND_EXIT("not enough non-flags args", EXIT_SUCCESS); }
 }
 
 // COMMAND-LINE PARSER END -----------------------------------------------------
 
 // MAIN LOGIC START ------------------------------------------------------------
 
-void do_data_transfer_over_connection() noexcept {
+void do_TCP_data_transfer_over_connection() noexcept {
 	while (true) {
 		NetworkShepherd.read();// TODO: etc...
 		NetworkShepherd.write();
 	}
 
 	NetworkShepherd.closeConnection();
+}
+
+void do_UDP_data_transfer_over_connection() noexcept {
+	// TODO: etc...
 }
 
 void accept_and_handle_connection() noexcept {
@@ -174,23 +163,31 @@ void accept_and_handle_connection() noexcept {
 int main(int argc, const char* const * argv) noexcept {
 	manageArgs(argc, argv);
 
-	// TODO: Make NetworkShepherd a singleton and have it cleanly clean up everything on destruction.
-	// TODO: This will happen even when we do REPORT_ERROR_AND_EXIT, which makes this program super super friendly and clean, very nice!
-	NetworkShepherd.init();	// TODO: Obviously handle errors eventually.
+	NetworkShepherd.init();
+
+	// TODO: Put in the source port stuff, I assume you use setsockopt for that.
 
 	if (flags::shouldListen) {
 		NetworkShepherd.listen(arguments::destinationIP, arguments::destinationPort);
 
 		if (flags::shouldKeepListening) {
 			while (true) { accept_and_handle_connection(); }
-			return 0;	// TODO: Safely dispose of NetworkShepherd.
+			return 0;
 		}
 		accept_and_handle_connection();
 
 		return 0;
 	}
 
-	NetworkShepherd.connect(arguments::destinationIP, arguments::destinationPort);
+	if (flags::shouldUseUDP) {
+		NetworkShepherd.createUDPSender(arguments::destinationIP, arguments::destinationPort);
+
+		do_UDP_data_transfer_over_connection();
+
+		return 0;
+	}
+
+	NetworkShepherd.createCommunicatorAndConnect(arguments::destinationIP, arguments::destinationPort);
 
 	do_data_transfer_over_connection();
 }
