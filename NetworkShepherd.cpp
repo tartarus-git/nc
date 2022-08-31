@@ -1,7 +1,13 @@
+#include "NetworkShepherd.h"
+// TODO: collect all the necessary headers here and in NetworkShepherd.h
+
 #include "error_reporting.h"
 
+#define CSA_RESOLVE_INTERFACES true
+#define CSA_RESOLVE_HOSTNAMES false
+
 template <bool resolve_interfaces_instead_of_hostnames>
-sockaddr construct_sockaddr(const char* address, uint16_t port) noexcept {
+sockaddr construct_sockaddr(const char* node, uint16_t port) noexcept {
 	struct addrinfo addressRetrievalHint;
 	addressRetrievalHint.ai_family = AF_UNSPEC;
 	addressRetrievalHint.ai_socktype = 0;
@@ -14,7 +20,7 @@ sockaddr construct_sockaddr(const char* address, uint16_t port) noexcept {
 		if (getifaddrs(&interfaceAddresses) != -1) {
 
 			for (struct ifaddrs* addr = interfaceAddresses; addr->ifa_next != nullptr; addr = info->ifa_next) {
-				if (std::strcmp(addr->ifa_name, address) == 0) {
+				if (std::strcmp(addr->ifa_name, node) == 0) {
 					struct result_sockaddr = addr->ifa_addr;
 					result_sockaddr.port = htons(port);
 
@@ -32,7 +38,7 @@ sockaddr construct_sockaddr(const char* address, uint16_t port) noexcept {
 
 	struct addrinfo* addressInfo;
 
-	switch (getaddrinfo(address, nullptr, nullptr, &addressInfo)) {
+	switch (getaddrinfo(node, nullptr, nullptr, &addressInfo)) {
 		case EAI_AGAIN: REPORT_ERROR_AND_EXIT("temporary DNS lookup failure, try again later", EXIT_SUCCESS);
 		case EAI_FAIL: REPORT_ERROR_AND_EXIT("DNS lookup failed", EXIT_SUCCESS);
 		case EAI_MEMORY: REPORT_ERROR_AND_EXIT("sockaddr construction failed, out of memory", EXIT_FAILURE);
@@ -54,31 +60,35 @@ sockaddr construct_sockaddr(const char* address, uint16_t port) noexcept {
 	REPORT_ERROR_AND_EXIT("hostname does not posess any IP addresses", EXIT_SUCCESS);
 }
 
-void NetworkShepherd_Class::init() noexcept { }
+void NetworkShepherd::init() noexcept { }
 
-void createListener(const char* address, uint16_t port, int socketType, IPVersionConstraint listenerIPVersionConstraint) noexcept {
-	struct sockaddr listenerAddress = construct_sockaddr<true>(address, port);
+void NetworkShepherd::createListener(const char* address, uint16_t port, int socketType, IPVersionConstraint listenerIPVersionConstraint) noexcept {
+	struct sockaddr listenerAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(address, port);
 
 	listenerSocket = socket(listenerAddress.sa_family, socketType, 0);
-	if (listenerSocket == -1) {
-		REPORT_ERROR_AND_EXIT("failed to create listener socket", EXIT_FAILURE);
-	}
+	if (listenerSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create listener socket", EXIT_FAILURE); }
 
 	switch (listenerIPVersionConstraint) {
 	case IPVersionConstraint::NONE:
-		// TODO: do nothing on linux, on windows, set the socket to allow ipv4 connections even if it's ipv6.
-	case IPVersionConstraint::FOUR:
-		if (listenerAddress.sa_family = AF_INET6) {
-			if (setsockopt(listenerSocket, SOL_SOCKET, ACCEPT_BOTH_THING, false, 0) == -1) {
-				// TODO: How about fixing setsockopt call first before continuing.
+		if (listenerAddress.sa_family == AF_INET6) {
+			int disabler = false;
+			if (setsockopt(listenerSocket, IPPROTO_IPV6, IPV6_V6ONLY, &disabler, sizeof(disabler)) == -1) {
+				REPORT_ERROR_AND_EXIT("failed to disable IPV6_V6ONLY with setsockopt", EXIT_FAILURE);
 			}
 		}
+		break;
+	case IPVersionConstraint::FOUR:
+		if (listenerAddress.sa_family == AF_INET6) {
+			REPORT_ERROR_AND_EXIT("\"-4\" flag invalid with IPv6 address", EXIT_SUCCESS);
+		}
+		break;
 	case IPVersionConstraint::SIX:
 		if (listenerAddress.sa_family == AF_INET) {
 			REPORT_ERROR_AND_EXIT("\"-6\" flag invalid with IPv4 address", EXIT_SUCCESS);
 		}
-		if (setsockopt(listenerSocket, SOL_SOCKET, ACCEPT_BOTH_THING, false, 0) == -1) {
-			REPORT_ERROR_AND_EXIT("setsockopt failed for unknown reason", EXIT_FAILURE);
+		int enabler = true;
+		if (setsockopt(listenerSocket, IPPROTO_IPV6, IPV6_V6ONLY, &enabler, sizeof(enabler)) == -1) {
+			REPORT_ERROR_AND_EXIT("failed to enable IPV6_V6ONLY with setsockopt", EXIT_FAILURE);
 		}
 	}
 
@@ -87,89 +97,136 @@ void createListener(const char* address, uint16_t port, int socketType, IPVersio
 	}
 }
 
-void NetworkShepherd_Class::listen(int backlogLength) noexcept {
+void NetworkShepherd::listen(int backlogLength) noexcept {
 	if (listen(listenerSocket, backLogLength) == -1) {
 		REPORT_ERROR_AND_EXIT("failed to listen with listener socket", EXIT_FAILURE);
 	}
 }
 
-void NetworkShepherd_Class::accept() noexcept {
+void NetworkShepherd::accept() noexcept {
 	connectionSocket = accept(listenerSocket, nullptr, nullptr);
 	if (connectionSocket == -1) {
+		if (errno == ECONNABORTED) {
+			REPORT_ERROR_AND_EXIT("failed to accept connection because it was aborted", EXIT_SUCCESS);
+		}
 		REPORT_ERROR_AND_EXIT("failed to accept connection on listener socket", EXIT_FAILURE);
 	}
 }
 
-void createCommunicatorAndConnect(const char* address, uint16_t port) noexcept {
-	sockaddr connectionTargetAddress = construct_sockaddr<false>(address, port);
+void bindCommunicatorToSourceAddress(const char* sourceAddress_string) noexcept {
+	struct sockaddr sourceAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(sourceAddress, 0);
 
-	connectionSocket = socket(connectionTargetAddress.sa_family, SOCK_STREAM, 0);
+	int enabler = true;
+	if (setsockopt(communicatorSocket, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &enabler, sizeof(enabler)) == -1) {
+		REPORT_ERROR_AND_EXIT("failed to enable IP_BIND_ADDRESS_NO_PORT with setsockopt", EXIT_FAILURE);
+	}
 
-	if (connectionSocket == -1) {
-		REPORT_ERROR_AND_EXIT("connection socket couldn't connect", EXIT_FAILURE);
+	if (bind(communicatorSocket, &sourceAddress, sizeof(sourceAddress)) == -1) {
+		switch (errno) {
+		case EACCES:
+			REPORT_ERROR_AND_EXIT("permission to bind socket to source address denied by local system", EXIT_SUCCESS);
+		default:
+			REPORT_ERROR_AND_EXIT("bind socket to source address failed, unknown reason", EXIT_FAILURE);
+		}
 	}
 }
 
-ssize_t read(void* buffer, size_t bufferSize) noexcept {
-	ssize_t bytesRead = read(connectionSocket, buffer, bufferSize);
-	if (bytesRead == -1) {
-		REPORT_ERROR_AND_EXIT("failed to read from connection socket", EXIT_FAILURE);
+void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress) noexcept {
+	struct sockaddr connectionTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, sourceAddress);
+
+	communicatorSocket = socket(connectionTargetAddress.sa_family, SOCK_STREAM, 0);
+	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to construct connection communicator socket", EXIT_FAILURE); }
+
+	if (connectionSourceAddress) { bindCommunicatorToSourceAddress(sourceAddress); }
+
+	if (connect(communicatorSocket, &connectionTargetAddress, sizeof(connectionTargetAddress)) == -1) {
+		switch (errno) {
+			case EADDRNOTAVAIL:
+				REPORT_ERROR_AND_EXIT("failed to connect, no ephemeral ports available", EXIT_FAILURE);
+			case ECONNREFUSED:
+				REPORT_ERROR_AND_EXIT("failed to connect, connection refused", EXIT_FAILURE);
+			case ENETUNREACH:
+				REPORT_ERROR_AND_EXIT("failed to connect, network unreachable", EXIT_FAILURE);
+			case ETIMEDOUT:
+				REPORT_ERROR_AND_EXIT("failed to connect, connection attempt timed out", EXIT_FAILURE);
+			case EACCES: case EPERM:
+				REPORT_ERROR_AND_EXIT("failed to connect, local system blocked attempt", EXIT_SUCCESS);
+			default:
+				REPORT_ERROR_AND_EXIT("failed to connect, unknown reason", EXIT_FAILURE);
+		}
 	}
-	return bytesRead;
 }
 
-ssize_t write(void* buffer, size_t bufferSize) noexcept {
-	ssize_t bytesWritten = write(connectionSocket, buffer, bufferSize);
-	if (bytesWritten == -1) {
-		REPORT_ERROR_AND_EXIT("failed to write to connection socket", EXIT_FAILURE);
-	}
-	return bytesWritten;
-}
-
-void closeCommunicator() noexcept {
-	if (close(connectionSocket) == -1) {
-		REPORT_ERROR_AND_EXIT("failed to close connection socket", EXIT_FAILURE);
+size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
+	void* buffer_start = buffer;
+	while (true) {
+		ssize_t bytesRead = read(communicatorSocket, buffer, buffer_size);
+		if (bytesRead == 0) { return buffer - buffer_start; }
+		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from communicator socket", EXIT_FAILURE); }
+		buffer += bytesRead;
+		buffer_size -= bytesRead;
 	}
 }
 
-void createUDPSender(const char* address, uint16_t port, IPVersionConstraint targetIPVersionConstraint) noexcept {
-	UDPSenderTargetAddress = construct_sockaddr<false>(address, port);
+void NetworkShepherd::write(void* buffer, size_t buffer_size) noexcept {
+	while (true) {
+		ssize_t bytesWritten = write(communicatorSocket, buffer, buffer_size);
+		if (bytesWritten == buffer_size) { return; }
+		if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to communicator socket", EXIT_FAILURE); }
+		buffer += bytesWritten;
+		buffer_size -= bytesWritten;
+	}
+}
 
-	switch (targetIPVersionConstraint) {
+size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept { return read(buffer, buffer_size); }
+
+void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t destinationPort, IPVersionConstraint destinationIPVersionConstraint, bool allowBroadcast, const char* sourceAddress) noexcept {
+	UDPSenderTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort);
+
+	switch (destinationIPVersionConstraint) {
 	case IPVersionConstraint::NONE: break;
 	case IPVersionConstraint::FOUR:
 		if (UDPSenderTargetAddress.sa_family != AF_INET) {
 			REPORT_ERROR_AND_EXIT("target address isn't IPv4", EXIT_SUCCESS);
 		}
+		break;
 	case IPVersionConstraint::SIX:
 		if (UDPSenderTargetAddress.sa_family != AF_INET6) {
 			REPORT_ERROR_AND_EXIT("target address isn't IPv6", EXIT_SUCCESS);
 		}
 	}
 
-	connectionSocket = socket(UDPSenderTargetAddress.sa_family, SOCK_DGRAM, 0);
-	if (connectionSocket == -1) {
-		REPORT_ERROR_AND_EXIT("failed to create UDP sender socket", EXIT_FAILURE);
+	communicatorSocket = socket(UDPSenderTargetAddress.sa_family, SOCK_DGRAM, 0);
+	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create UDP sender communicator socket", EXIT_FAILURE); }
+
+	if (allowBroadcast) {
+		int enabler = true;
+		if (setsockopt(communicatorSocket, SOL_SOCKET, SO_BROADCAST, &enabler, sizeof(enabler)) == -1) {
+			REPORT_ERROR_AND_EXIT("failed to allow broadcast on UDP sender socket with setsockopt", EXIT_FAILURE);
+		}
+	}
+
+	if (sourceAddress) { bindCommunicatorToSourceAddress(sourceAddress); }
+}
+
+void NetworkShepherd::sendUDP(const void* buffer, size_t buffer_size) noexcept {
+	while (true) {
+		ssize_t bytesSent = sendto(connectionSocket, buffer, buffer_size, 0, &UDPSenderTargetAddress, sizeof(UDPSenderTargetAddress));
+		if (bytesSent == buffer_size) { return; }
+		if (bytesSent == -1) { REPORT_ERROR_AND_EXIT("failed to sendto on UDP sender communicator socket", EXIT_FAILURE); }
+		buffer += bytesSent;
+		buffer_size -= bytesSent;
 	}
 }
 
-size_t sendUDP(const void* buffer, size_t size) noexcept {
-	sendto(connectionSocket, buffer, size, 0, &UDPSenderTargetAddress, sizeof(UDPSenderTargetAddress));
-	// TODO: Did I do the addrlen thing right?
+void NetworkShepherd::release() noexcept { }
+
+void NetworkShepherd::closeCommunicator() noexcept {
+	if (close(communicatorSocket) == -1) { REPORT_ERROR_AND_EXIT("failed to close communicator socket", EXIT_FAILURE); }
 }
 
-void closeUDPSender() noexcept {
-	closeCommunicator();
-}
-
-void closeListener() noexcept {
+void NetworkShepherd::closeListener() noexcept {
 	if (close(listenerSocket) == -1) {
 		REPORT_ERROR_AND_EXIT("failed to close listener socket", EXIT_FAILURE);
 	}
 }
-
-void release() noexcept { }
-
-/*NetworkShepherd_Class::~NetworkShepherd_Class() noexcept {
-	if (connectionSocket != -1) { 
-}*/

@@ -1,9 +1,12 @@
 #include <cstdlib>	// for EXIT_SUCCESS and EXIT_FAILURE, as well as every syscall we use
 #include <cstdint>	// for fixed-width integer types
 
+#include "NetworkShepherd.h"
+// TODO: See if you need more headers than this.
+
 #include "error_reporting.h"
 
-const char helpText[] = "usage: nc [-46lkbu] [--source <source> || --port <source-port>] [<address> <port>]\n" \
+const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] [<address> <port>]\n" \
 			"       nc --help\n" \
 			"\n" \
 			"function: nc (netcat) sends and receives data over a network (no flags: initiate TCP connection to <address> on <port>)\n" \
@@ -14,18 +17,13 @@ const char helpText[] = "usage: nc [-46lkbu] [--source <source> || --port <sourc
 				"\t[-l]                   --> listen for connections on <address> and <port>\n" \
 				"\t[-k]                   --> (only valid with -l) keep listening after connection terminates\n" \
 				"\t[-u]                   --> use UDP (default: TCP)\n" \
+				"\t[-b]                   --> allow broadcast addresses\n" \
 				"\t[--source <source>]    --> (only valid without -l) send from <source> (can be IP/interface)\n" \
 				"\t[--port <source-port>] --> (only valid without -l) send from <source-port>\n" \
 				"\t[<address>]            --> send to <address> or (with -l) listen on <address> (can be IP/hostname/interface)\n" \
 				"\t[<port>]               --> send to <port> or (with -l) listen on <port>\n";
 
 // COMMAND-LINE PARSER START ---------------------------------------------------
-
-enum class IPVersionConstraint : uint8_t {
-	NONE,
-	FOUR,
-	SIX
-};
 
 namespace flags {
 	const char* sourceIP;
@@ -37,6 +35,8 @@ namespace flags {
 	bool shouldKeepListening = false;
 
 	bool shouldUseUDP = false;
+
+	bool allowBroadcast = false;
 }
 
 namespace arguments {
@@ -59,11 +59,6 @@ uint16_t parsePort(const char* portString) noexcept {
 void parseLetterFlags(const char* flagContent) noexcept {
 	for (size_t i = 0; flagContent[i] != '\0'; i++) {
 		switch (flagContent[i]) {
-			// TODO: Can you listen on an ipv6 addr and receive ipv4 traffic? Yes you can actually.
-			// TODO: That means you need to throw error when -4 is specified and the address is an ipv6 address for example.
-			// No you don't, you only need to throw an error when an ipv4 address is specified and -6 is used, because that really isn't possible.
-			// Accepting ipv4 connections on ipv6 listeners works, there is more to it though and the cross-platform stuff is something you have to be wary
-			// of.
 			case '4':
 				if (flags::IPVersionConstraint != IPVersionConstraint::NONE) {
 					REPORT_ERROR_AND_EXIT("more than one IP version constraint specified", EXIT_SUCCESS);
@@ -86,9 +81,14 @@ void parseLetterFlags(const char* flagContent) noexcept {
 				flags::shouldKeepListening = true;
 			case 'u':
 				if (flags::shouldUseUDP) {
-					REPORT_ERROR_AND_EXIT("\"-u\" flag used more than once", EXIT_SUCCESS);
+					REPORT_ERROR_AND_EXIT("\"-u\" flag specified more than once", EXIT_SUCCESS);
 				}
 				flags::shouldUseUDP = true;
+			case 'b':
+				if (flags::allowBroadcast) {
+					REPORT_ERROR_AND_EXIT("\"-b\" flag specified more than once", EXIT_SUCCESS);
+				}
+				flags::allowBroadcast = true;
 			default: REPORT_ERROR_AND_EXIT("one or more invalid flags specified", EXIT_SUCCESS);
 		}
 	}
@@ -135,6 +135,11 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 
 	if (!flags::shouldListen) {
 		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
+	} else {
+		if (flags::allowBroadcast) { REPORT_ERROR_AND_EXIT("broadcast isn't allowed when listening", EXIT_SUCCESS); }
+	}
+	if (!flags::shouldUseUDP) {
+		if (flags::allowBroadcast) { REPORT_ERROR_AND_EXIT("broadcast is only allowed when sending UDP packets", EXIT_SUCCESS); }
 	}
 	if (flags::shouldKeepListening) {
 		if (flags::shouldUseUDP) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified with \"-u\"", EXIT_SUCCESS); }
@@ -146,74 +151,112 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 
 // MAIN LOGIC START ------------------------------------------------------------
 
-void networkRead_sub_transfer() noexcept {
+// NOTE: One never returns from this function, since UDP sockets can only get closed properly by the local user.
+// NOTE: When the local user sends SIGINT, the program abruptly terminates and we rely on the OS to clean up the UDP socket.
+// NOTE: That's why we don't do it here.
+void do_UDP_receive() noexcept {
 	char buffer[BUFSIZ];
 	while (true) {
-		ssize_t bytesRead = NetworkShepherd.read(buffer, sizeof(buffer));
+		size_t bytesRead = NetworkShepherd::readUDP(buffer, sizeof(buffer));
 		while (true) {
 			ssize_t bytesWritten = write(buffer, bytesRead);
-			if (bytesWritten == -1) {
-				// TODO: report error and such
-			}
 			if (bytesWritten == bytesRead) { break; }
+			if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
 			bytesRead -= bytesWritten;
 		}
 	}
 }
 
-void do_data_transfer_over_connection() noexcept {
-	std::thread networkReadThread(networkRead_sub_transfer);
-	networkReadThread.start();
+void do_UDP_send_and_close() noexcept {
+	char buffer[BUFSIZ];
+	while (true) {
+		ssize_t bytesRead = read(buffer, sizeof(buffer));
+		if (bytesRead == 0) { break; }
+		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
+		NetworkShepherd::writeUDP(buffer, bytesRead);
+	}
+
+	NetworkShepherd::closeCommunicator();
+}
+
+void network_read_sub_transfer() noexcept {
+	char buffer[BUFSIZ];
+	while (true) {
+		ssize_t bytesRead = NetworkShepherd::read(buffer, sizeof(buffer));
+		if (bytesRead == 0) { break; }
+		while (true) {
+			ssize_t bytesWritten = write(buffer, bytesRead);
+			if (bytesWritten == bytesRead) { break; }
+			if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
+			bytesRead -= bytesWritten;
+		}
+	}
+}
+
+void do_data_transfer_over_connection_and_close() noexcept {
+	std::thread networkReadThread(network_read_sub_transfer);
 
 	char buffer[BUFSIZ];
 	while (true) {
 		ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer));
-		NetworkShepherd.write(buffer, bytesRead);
+		if (bytesRead == 0) { break; }
+		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
+		NetworkShepherd::write(buffer, bytesRead);
 	}
 
 	networkReadThread.join();
 
-	NetworkShepherd.closeConnection();
+	NetworkShepherd::closeCommunicator();
 }
 
 void accept_and_handle_connection() noexcept {
-	NetworkShepherd.accept();
+	NetworkShepherd::accept();
+	do_data_transfer_over_connection_and_close();
 }
 
 int main(int argc, const char* const * argv) noexcept {
 	manageArgs(argc, argv);
 
-	NetworkShepherd.init();
+	NetworkShepherd::init();
 
 	// TODO: Put in the source port stuff, I assume you use setsockopt for that.
 
 	if (flags::shouldListen) {
 		if (flags::shouldUseUDP) {
-			// TODO: Use new data transfer function that only receives.
+			NetworkShepherd::createListener(arguments::destinationIP, arguments::destinationPort, SOCK_DGRAM, flags::IPVersionConstraint);
+			do_UDP_receive();
+			// NOTE: The above function never returns.
 		}
 
-		NetworkShepherd.listen(arguments::destinationIP, arguments::destinationPort);
+		NetworkShepherd::createListener(arguments::destinationIP, arguments::destinationPort, SOCK_STREAM, flags::IPVersionConstraint);
+		NetworkShepherd::listen(arguments::destinationIP, arguments::destinationPort);
 
 		if (flags::shouldKeepListening) {
 			while (true) { accept_and_handle_connection(); }
-			return 0;
 		}
+
 		accept_and_handle_connection();
 
-		return 0;
+		NetworkShepherd::closeListener();
+
+		NetworkShepherd::release();
+
+		return EXIT_SUCCESS;
 	}
 
 	if (flags::shouldUseUDP) {
-		NetworkShepherd.createUDPSender(arguments::destinationIP, arguments::destinationPort);
+		NetworkShepherd::createUDPSender(arguments::destinationIP, arguments::destinationPort);
+		do_UDP_send();
 
-		// TODO: Use new data transfer function that only sends.
+		NetworkShepherd::release();
 
-		return 0;
+		return EXIT_SUCCESS;
 	}
 
 	NetworkShepherd.createCommunicatorAndConnect(arguments::destinationIP, arguments::destinationPort);
-
 	do_data_transfer_over_connection();
+
+	NetworkShepherd::release();
 }
 
 // MAIN LOGIC END --------------------------------------------------------------
