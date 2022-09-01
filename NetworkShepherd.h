@@ -4,6 +4,7 @@
 
 #include <cstdint>
 
+// TODO: I guess you could get rid of this and use AF_UNSPEC, AF_INET and AF_INET6 throughout the code, would be a small bit more efficient.
 enum class IPVersionConstraint : uint8_t {
 	NONE,
 	FOUR,
@@ -11,32 +12,33 @@ enum class IPVersionConstraint : uint8_t {
 };
 
 class NetworkShepherd {
-	int listenerSocket;
-	int communicatorSocket;
+public:
+	static int listenerSocket;
+	static int communicatorSocket;
 
-	struct sockaddr UDPSenderTargetAddress;
+	static struct sockaddr UDPSenderTargetAddress;
 
-	void init() noexcept;
+	static void init() noexcept;
 
-	void createListener(const char* address, uint16_t port, int socketType, IPVersionConstraint listenerIPVersionConstraint) noexcept;
+	static void createListener(const char* address, uint16_t port, int socketType, IPVersionConstraint listenerIPVersionConstraint) noexcept;
 
-	void listen(int backlogLength) noexcept;
-	void accept() noexcept;
+	static void listen(int backlogLength) noexcept;
+	static void accept() noexcept;
 
-	void createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress) noexcept;
+	static void createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress, IPVersionConstraint connectionIPVersionConstraint) noexcept;
 
-	size_t read(void* buffer, size_t buffer_size) noexcept;
-	void write(const void* buffer, size_t buffer_size) noexcept;
+	static size_t read(void* buffer, size_t buffer_size) noexcept;
+	static void write(const void* buffer, size_t buffer_size) noexcept;
 
-	size_t readUDP(void* buffer, size_t buffer_size) noexcept;
+	static size_t readUDP(void* buffer, size_t buffer_size) noexcept;
 
-	void createUDPSender(const char* destinationAddress, uint16_t destinationPort, IPVersionConstraint destinationIPVersionConstraint, bool allowBroadcast, const char* sourceAddress) noexcept;
+	static void createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, IPVersionConstraint senderIPVersionConstraint) noexcept;
 
-	void sendUDP(const void* buffer, size_t buffer_size) noexcept;
+	static void writeUDP(const void* buffer, size_t buffer_size) noexcept;
 
-	void closeCommunicator() noexcept;
+	static void closeCommunicator() noexcept;
 
-	void closeListener() noexcept;
+	static void closeListener() noexcept;
 
-	void release() noexcept;
+	static void release() noexcept;
 };

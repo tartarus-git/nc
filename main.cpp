@@ -28,8 +28,8 @@ const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <sourc
 // COMMAND-LINE PARSER START ---------------------------------------------------
 
 namespace flags {
-	const char* sourceIP;
-	uint16_t sourcePort;
+	const char* sourceIP = nullptr;
+	uint16_t sourcePort = 0;	// TODO: Actually use the source port.
 
 	IPVersionConstraint IPVersionConstraint = IPVersionConstraint::NONE;
 
@@ -49,10 +49,10 @@ namespace arguments {
 uint16_t parsePort(const char* portString) noexcept {
 	if (portString[0] == '\0') { REPORT_ERROR_AND_EXIT("port input string cannot be empty", EXIT_SUCCESS); }
 	uint16_t result = portString[0] - '0';
-	if (result < 0 || result > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
-	for (size_t i = 0; portString[i] != '\0'; i++) {
+	if (result > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
+	for (size_t i = 1; portString[i] != '\0'; i++) {
 		unsigned char digit = portString[i] - '0';
-		if (digit < 0 || digit > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
+		if (digit > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
 		result = result * 10 + digit;
 	}
 	return result;
@@ -66,31 +66,37 @@ void parseLetterFlags(const char* flagContent) noexcept {
 					REPORT_ERROR_AND_EXIT("more than one IP version constraint specified", EXIT_SUCCESS);
 				}
 				flags::IPVersionConstraint = IPVersionConstraint::FOUR;
+				continue;
 			case '6':
 				if (flags::IPVersionConstraint != IPVersionConstraint::NONE) {
 					REPORT_ERROR_AND_EXIT("more than one IP version constraint specified", EXIT_SUCCESS);
 				}
 				flags::IPVersionConstraint = IPVersionConstraint::SIX;
+				continue;
 			case 'l':
 				if (flags::shouldListen) {
 					REPORT_ERROR_AND_EXIT("\"-l\" flag specified more than once", EXIT_SUCCESS);
 				}
 				flags::shouldListen = true;
+				continue;
 			case 'k':
 				if (flags::shouldKeepListening) {
 					REPORT_ERROR_AND_EXIT("\"-k\" flag specified more than once", EXIT_SUCCESS);
 				}
 				flags::shouldKeepListening = true;
+				continue;
 			case 'u':
 				if (flags::shouldUseUDP) {
 					REPORT_ERROR_AND_EXIT("\"-u\" flag specified more than once", EXIT_SUCCESS);
 				}
 				flags::shouldUseUDP = true;
+				continue;
 			case 'b':
 				if (flags::allowBroadcast) {
 					REPORT_ERROR_AND_EXIT("\"-b\" flag specified more than once", EXIT_SUCCESS);
 				}
 				flags::allowBroadcast = true;
+				continue;
 			default: REPORT_ERROR_AND_EXIT("one or more invalid flags specified", EXIT_SUCCESS);
 		}
 	}
@@ -126,6 +132,7 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 				}
 			default: parseLetterFlags(flagContent);
 			}
+			continue;
 		}
 		switch (normalArgCount) {
 		case 0: arguments::destinationIP = argv[i]; break;
@@ -134,6 +141,8 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 		}
 		normalArgCount++;
 	}
+
+	if (normalArgCount < 2) { REPORT_ERROR_AND_EXIT("not enough non-flag args", EXIT_SUCCESS); }
 
 	if (!flags::shouldListen) {
 		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
@@ -157,22 +166,39 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 // NOTE: When the local user sends SIGINT, the program abruptly terminates and we rely on the OS to clean up the UDP socket.
 // NOTE: That's why we don't do it here.
 void do_UDP_receive() noexcept {
-	char buffer[BUFSIZ];
+	char buffer[65527];	// NOTE: We use the theoretical maximum data size for UDP packets here, since readUDP reads
+				// packet-wise and discards whatever we don't catch in the buffer.
+				// There isn't anything we can do about this AFAIK, we just try our best to get all the data.
+				// IPv6 allows UDP packets to be bigger than this buffer by a lot, but there isn't anything we
+				// can do about that either AFAIK (plus, no one in their right mind would make UDP packets bigger
+				// than a couple hundred bytes anyway).
+				// Reason for all this: it's too complicated to extract data and buffer it, so kernel
+				// just only reads the current packet and discards the rest of packet if you didn't read enough.
+				// The reason why it's too complicated is because UDP packets can come from many sources at once.
+				// You would have to sort by source and have multiple different buffers, just so the user can read
+				// in a nice way. If you instead decide to indiscriminately just buffer all the packets,
+				// then the API becomes almost useless for the user in a lot of cases, because it's impossible
+				// to determine which part of the byte stream came from which remote.
+				// Basically, the fact that UDP is connectionless forces this on us.
 	while (true) {
 		size_t bytesRead = NetworkShepherd::readUDP(buffer, sizeof(buffer));
+		if (bytesRead == 0) { continue; }
+		char* buffer_ptr = buffer;
 		while (true) {
-			ssize_t bytesWritten = write(buffer, bytesRead);
+			ssize_t bytesWritten = write(STDOUT_FILENO, buffer_ptr, bytesRead);
 			if (bytesWritten == bytesRead) { break; }
 			if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
+			buffer_ptr += bytesWritten;
 			bytesRead -= bytesWritten;
 		}
 	}
 }
 
 void do_UDP_send_and_close() noexcept {
-	char buffer[BUFSIZ];
+	char buffer[BUFSIZ];		// TODO: Add an if somewhere so that it caps at the max packet length or something.
+					// That way the sendto call wont fail because it doesn't fit in a packet.
 	while (true) {
-		ssize_t bytesRead = read(buffer, sizeof(buffer));
+		ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer));
 		if (bytesRead == 0) { break; }
 		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
 		NetworkShepherd::writeUDP(buffer, bytesRead);
@@ -185,18 +211,24 @@ void network_read_sub_transfer() noexcept {
 	char buffer[BUFSIZ];
 	while (true) {
 		ssize_t bytesRead = NetworkShepherd::read(buffer, sizeof(buffer));
-		if (bytesRead == 0) { break; }
+		if (bytesRead == 0) { return; }
+		char* buffer_ptr = buffer;
 		while (true) {
-			ssize_t bytesWritten = write(buffer, bytesRead);
+			ssize_t bytesWritten = write(STDOUT_FILENO, buffer_ptr, bytesRead);
 			if (bytesWritten == bytesRead) { break; }
 			if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
+			buffer_ptr += bytesWritten;
 			bytesRead -= bytesWritten;
 		}
 	}
 }
 
+// TODO: after reading receives EOF when listening, you still have to write something in the TTY and hit enter for the program to close.
+// If we had better communication between the threads, we could fix that. It's kind of challenging though because of the blocking calls.
+// Maybe non-blocking is the way to go? Think about how to solve it.
+
 void do_data_transfer_over_connection_and_close() noexcept {
-	std::thread networkReadThread(network_read_sub_transfer);
+	std::thread networkReadThread((void (*)())network_read_sub_transfer);
 
 	char buffer[BUFSIZ];
 	while (true) {
@@ -229,7 +261,7 @@ int main(int argc, const char* const * argv) noexcept {
 		}
 
 		NetworkShepherd::createListener(arguments::destinationIP, arguments::destinationPort, SOCK_STREAM, flags::IPVersionConstraint);
-		NetworkShepherd::listen(arguments::destinationIP, arguments::destinationPort);
+		NetworkShepherd::listen(0);		// TODO: Make the backlog changeable through a cmdline flag.
 
 		if (flags::shouldKeepListening) {
 			while (true) { accept_and_handle_connection(); }
@@ -245,16 +277,16 @@ int main(int argc, const char* const * argv) noexcept {
 	}
 
 	if (flags::shouldUseUDP) {
-		NetworkShepherd::createUDPSender(arguments::destinationIP, arguments::destinationPort);
-		do_UDP_send();
+		NetworkShepherd::createUDPSender(arguments::destinationIP, arguments::destinationPort, flags::allowBroadcast, flags::sourceIP, flags::IPVersionConstraint);
+		do_UDP_send_and_close();
 
 		NetworkShepherd::release();
 
 		return EXIT_SUCCESS;
 	}
 
-	NetworkShepherd.createCommunicatorAndConnect(arguments::destinationIP, arguments::destinationPort);
-	do_data_transfer_over_connection();
+	NetworkShepherd::createCommunicatorAndConnect(arguments::destinationIP, arguments::destinationPort, flags::sourceIP, flags::IPVersionConstraint);
+	do_data_transfer_over_connection_and_close();
 
 	NetworkShepherd::release();
 }
