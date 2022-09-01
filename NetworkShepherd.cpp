@@ -1,5 +1,14 @@
 #include "NetworkShepherd.h"
-// TODO: collect all the necessary headers here and in NetworkShepherd.h
+
+#include <cstdint>
+#include <cstring>
+
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+
+#include <cerrno>
 
 #include "error_reporting.h"
 
@@ -121,6 +130,7 @@ void bindCommunicatorToSourceAddress(const char* sourceAddress_string) noexcept 
 		REPORT_ERROR_AND_EXIT("failed to enable IP_BIND_ADDRESS_NO_PORT with setsockopt", EXIT_FAILURE);
 	}
 
+	// TODO: What about IP version disparaities between source and destination, we need to handle those.
 	if (bind(communicatorSocket, &sourceAddress, sizeof(sourceAddress)) == -1) {
 		switch (errno) {
 		case EACCES:

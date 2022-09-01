@@ -1,8 +1,10 @@
-#include <cstdlib>	// for EXIT_SUCCESS and EXIT_FAILURE, as well as every syscall we use
-#include <cstdint>	// for fixed-width integer types
+#include <cstdlib>		// for EXIT_SUCCESS and EXIT_FAILURE, as well as every syscall we use
+#include <cstdint>		// for fixed-width integer types
+#include <cstring>		// for std::strcmp
+#include <unistd.h>		// for linux I/O
+#include <thread>		// for multi-threading
 
-#include "NetworkShepherd.h"
-// TODO: See if you need more headers than this.
+#include "NetworkShepherd.h"	// for NetworkShepherd class, which serves as our interface with the network
 
 #include "error_reporting.h"
 
@@ -218,8 +220,6 @@ int main(int argc, const char* const * argv) noexcept {
 	manageArgs(argc, argv);
 
 	NetworkShepherd::init();
-
-	// TODO: Put in the source port stuff, I assume you use setsockopt for that.
 
 	if (flags::shouldListen) {
 		if (flags::shouldUseUDP) {

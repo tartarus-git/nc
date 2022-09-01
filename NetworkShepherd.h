@@ -1,5 +1,9 @@
 #pragma once
 
+#include <sys/socket.h>
+
+#include <cstdint>
+
 enum class IPVersionConstraint : uint8_t {
 	NONE,
 	FOUR,
