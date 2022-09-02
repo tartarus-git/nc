@@ -21,20 +21,25 @@ const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <sourc
 				"\t[-u]                   --> use UDP (default: TCP)\n" \
 				"\t[-b]                   --> allow broadcast addresses\n" \
 				"\t[--source <source>]    --> (only valid without -l) send from <source> (can be IP/interface)\n" \
-				"\t[--port <source-port>] --> (only valid without -l) send from <source-port>\n" \
+				"\t[--port <source-port>] --> (only valid without -l and with --source*) send from <source-port>\n" \
+				"\t[--backlog <backlog-length>] --> (only valid with -k) set backlog length to <backlog-length>\n" \
 				"\t[<address>]            --> send to <address> or (with -l) listen on <address> (can be IP/hostname/interface)\n" \
-				"\t[<port>]               --> send to <port> or (with -l) listen on <port>\n";
+				"\t[<port>]               --> send to <port> or (with -l) listen on <port>\n" \
+			"\n" \
+			"notes:\n" \
+				"\t* The exception to the rule is \"--port 0\". This is treated as a no-op and can appear any amount of times.\n";
 
 // COMMAND-LINE PARSER START ---------------------------------------------------
 
 namespace flags {
 	const char* sourceIP = nullptr;
-	uint16_t sourcePort = 0;	// TODO: Actually use the source port.
+	uint16_t sourcePort = 0;
 
 	IPVersionConstraint IPVersionConstraint = IPVersionConstraint::NONE;
 
 	bool shouldListen = false;
 	bool shouldKeepListening = false;
+	int backlog = -1;
 
 	bool shouldUseUDP = false;
 
@@ -48,12 +53,26 @@ namespace arguments {
 
 uint16_t parsePort(const char* portString) noexcept {
 	if (portString[0] == '\0') { REPORT_ERROR_AND_EXIT("port input string cannot be empty", EXIT_SUCCESS); }
-	uint16_t result = portString[0] - '0';
+	uint32_t result = portString[0] - '0';
 	if (result > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
 	for (size_t i = 1; portString[i] != '\0'; i++) {
 		unsigned char digit = portString[i] - '0';
 		if (digit > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
 		result = result * 10 + digit;
+		if (result > 0b1111111111111111) { REPORT_ERROR_AND_EXIT("port input value too large", EXIT_SUCCESS); }
+	}
+	return result;
+}
+
+int parseBacklog(const char* backlogString) noexcept {
+	if (backlogString[0] == '\0') { REPORT_ERROR_AND_EXIT("backlog input string cannot be empty", EXIT_SUCCESS); }
+	uint64_t result = backlogString[0] - '0';
+	if (result > 9) { REPORT_ERROR_AND_EXIT("backlog input string is invalid", EXIT_SUCCESS); }
+	for (size_t i = 1; backlogString[i] != '\0'; i++) {
+		unsigned char digit = backlogString[i] - '0';
+		if (digit > 9) { REPORT_ERROR_AND_EXIT("backlog input string is invalid", EXIT_SUCCESS); }
+		result = result * 10 + digit;
+		if (result > 0b01111111111111111111111111111111) { REPORT_ERROR_AND_EXIT("backlog input value too large", EXIT_SUCCESS); }		// TODO: Make sure this binary value is ok and also make sure that the unsigned to signed casting when returning works out.
 	}
 	return result;
 }
@@ -112,13 +131,24 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 				{
 					flagContent++;
 					if (std::strcmp(flagContent, "source") == 0) {
+						if (flags::sourceIP != nullptr) { REPORT_ERROR_AND_EXIT("\"--source\" cannot be specified more than once", EXIT_SUCCESS); }
 						i++;
+						if (i == argc) { REPORT_ERROR_AND_EXIT("\"--source\" requires an input value", EXIT_SUCCESS); }
 						flags::sourceIP = argv[i];
 						continue;
 					}
 					if (std::strcmp(flagContent, "port") == 0) {
+						if (flags::sourcePort != 0) { REPORT_ERROR_AND_EXIT("\"--port\" cannot be specified more than once", EXIT_SUCCESS); }
 						i++;
+						if (i == argc) { REPORT_ERROR_AND_EXIT("\"--port\" requires an input value", EXIT_SUCCESS); }
 						flags::sourcePort = parsePort(argv[i]);
+						continue;
+					}
+					if (std::strcmp(flagContent, "backlog") == 0) {
+						if (flags::backlog != -1) { REPORT_ERROR_AND_EXIT("\"--backlog\" cannot be specified more than once", EXIT_SUCCESS); }
+						i++;
+						if (i == argc) { REPORT_ERROR_AND_EXIT("\"--backlog\" requires an input value", EXIT_SUCCESS); }
+						flags::backlog = parseBacklog(argv[i]);
 						continue;
 					}
 					if (std::strcmp(flagContent, "help") == 0) {
@@ -143,6 +173,16 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 	}
 
 	if (normalArgCount < 2) { REPORT_ERROR_AND_EXIT("not enough non-flag args", EXIT_SUCCESS); }
+
+	if (flags::sourcePort != 0) {
+		if (flags::sourceIP == nullptr) {
+			REPORT_ERROR_AND_EXIT("\"--port\" cannot be specified without \"--source\" unless the specified source port is 0", EXIT_SUCCESS);
+		}
+	}
+
+	if (flags::backlog != -1) {
+		if (flags::shouldKeepListening == false) { REPORT_ERROR_AND_EXIT("\"--backlog\" cannot be specified without \"-k\"", EXIT_SUCCESS); }
+	}
 
 	if (!flags::shouldListen) {
 		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
@@ -195,23 +235,40 @@ void do_UDP_receive() noexcept {
 }
 
 void do_UDP_send_and_close() noexcept {
-	char buffer[BUFSIZ];		// TODO: Add an if somewhere so that it caps at the max packet length or something.
+	//char buffer[BUFSIZ];		// TODO: Add an if somewhere so that it caps at the max packet length or something.
 					// That way the sendto call wont fail because it doesn't fit in a packet.
+	// TODO: Actually, get MTU from kernel and calculate the optimal datagram size and use that as the buffer size.
+
+	char* buffer;
+	if (NetworkShepherd::UDPSenderTargetAddress.sa_family == AF_INET6) { buffer = new char[1280 - 40 - 8]; }		// TODO: Make these new's std::nothrow I guess, or switch to a better system.
+	else { buffer = new char[68 - 20 - 8]; }
+
 	while (true) {
-		ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer));
+		ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer));		// TODO: Fix this if you end up keeping this bad system.
 		if (bytesRead == 0) { break; }
 		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
 		NetworkShepherd::writeUDP(buffer, bytesRead);
 	}
 
 	NetworkShepherd::closeCommunicator();
+
+	delete[] buffer;
 }
 
+#define NRST_CLOSE_STDOUT_ON_FINISH true
+#define NRST_LEAVE_STDOUT_OPEN false
+
+template <bool close_stdout_on_finish>
 void network_read_sub_transfer() noexcept {
 	char buffer[BUFSIZ];
 	while (true) {
 		ssize_t bytesRead = NetworkShepherd::read(buffer, sizeof(buffer));
-		if (bytesRead == 0) { return; }
+		if (bytesRead == 0) {
+			if (close_stdout_on_finish) {
+				if (close(STDOUT_FILENO) == -1) { REPORT_ERROR_AND_EXIT("failed to close stdout fd", EXIT_FAILURE); }
+			}
+			return;
+		}
 		char* buffer_ptr = buffer;
 		while (true) {
 			ssize_t bytesWritten = write(STDOUT_FILENO, buffer_ptr, bytesRead);
@@ -223,17 +280,14 @@ void network_read_sub_transfer() noexcept {
 	}
 }
 
-// TODO: after reading receives EOF when listening, you still have to write something in the TTY and hit enter for the program to close.
-// If we had better communication between the threads, we could fix that. It's kind of challenging though because of the blocking calls.
-// Maybe non-blocking is the way to go? Think about how to solve it.
-
+template <bool close_stdout_on_finish>
 void do_data_transfer_over_connection_and_close() noexcept {
-	std::thread networkReadThread((void (*)())network_read_sub_transfer);
+	std::thread networkReadThread((void (*)())network_read_sub_transfer<close_stdout_on_finish>);
 
 	char buffer[BUFSIZ];
 	while (true) {
 		ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer));
-		if (bytesRead == 0) { break; }
+		if (bytesRead == 0) { NetworkShepherd::shutdownCommunicatorWrite(); break; }
 		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
 		NetworkShepherd::write(buffer, bytesRead);
 	}
@@ -243,9 +297,10 @@ void do_data_transfer_over_connection_and_close() noexcept {
 	NetworkShepherd::closeCommunicator();
 }
 
+template <bool close_stdout_on_finish>
 void accept_and_handle_connection() noexcept {
 	NetworkShepherd::accept();
-	do_data_transfer_over_connection_and_close();
+	do_data_transfer_over_connection_and_close<close_stdout_on_finish>();
 }
 
 int main(int argc, const char* const * argv) noexcept {
@@ -261,13 +316,13 @@ int main(int argc, const char* const * argv) noexcept {
 		}
 
 		NetworkShepherd::createListener(arguments::destinationIP, arguments::destinationPort, SOCK_STREAM, flags::IPVersionConstraint);
-		NetworkShepherd::listen(0);		// TODO: Make the backlog changeable through a cmdline flag.
+		NetworkShepherd::listen(flags::backlog == -1 ? 0 : flags::backlog);
 
 		if (flags::shouldKeepListening) {
-			while (true) { accept_and_handle_connection(); }
+			while (true) { accept_and_handle_connection<NRST_LEAVE_STDOUT_OPEN>(); }
 		}
 
-		accept_and_handle_connection();
+		accept_and_handle_connection<NRST_CLOSE_STDOUT_ON_FINISH>();
 
 		NetworkShepherd::closeListener();
 
@@ -277,7 +332,7 @@ int main(int argc, const char* const * argv) noexcept {
 	}
 
 	if (flags::shouldUseUDP) {
-		NetworkShepherd::createUDPSender(arguments::destinationIP, arguments::destinationPort, flags::allowBroadcast, flags::sourceIP, flags::IPVersionConstraint);
+		NetworkShepherd::createUDPSender(arguments::destinationIP, arguments::destinationPort, flags::allowBroadcast, flags::sourceIP, flags::sourcePort, flags::IPVersionConstraint);
 		do_UDP_send_and_close();
 
 		NetworkShepherd::release();
@@ -285,8 +340,8 @@ int main(int argc, const char* const * argv) noexcept {
 		return EXIT_SUCCESS;
 	}
 
-	NetworkShepherd::createCommunicatorAndConnect(arguments::destinationIP, arguments::destinationPort, flags::sourceIP, flags::IPVersionConstraint);
-	do_data_transfer_over_connection_and_close();
+	NetworkShepherd::createCommunicatorAndConnect(arguments::destinationIP, arguments::destinationPort, flags::sourceIP, flags::sourcePort, flags::IPVersionConstraint);
+	do_data_transfer_over_connection_and_close<NRST_CLOSE_STDOUT_ON_FINISH>();
 
 	NetworkShepherd::release();
 }

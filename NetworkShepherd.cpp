@@ -46,9 +46,10 @@ sockaddr construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint
 				if (std::strcmp(addr->ifa_name, node) == 0) {
 					if (!addr->ifa_addr) { continue; }
 
+					// TODO: Fix this broken logic somehow.
 					if (addressFamilyConstraint != AF_UNSPEC && addr->ifa_addr->sa_family != addressFamilyConstraint) { continue; }
 
-					struct sockaddr result_sockaddr = *(addr->ifa_addr);
+					struct sockaddr result_sockaddr = *(addr->ifa_addr);			// TODO: Actually understand how sockaddr's work.
 					((sockaddr_in*)&result_sockaddr)->sin_port = htons(port);
 
 					freeifaddrs(interfaceAddresses);
@@ -65,7 +66,7 @@ sockaddr construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint
 
 	struct addrinfo* addressInfo;
 
-	switch (getaddrinfo(node, nullptr, nullptr, &addressInfo)) {
+	switch (getaddrinfo(node, nullptr, &addressRetrievalHint, &addressInfo)) {
 		case 0: break;
 		case EAI_AGAIN: REPORT_ERROR_AND_EXIT("temporary DNS lookup failure, try again later", EXIT_SUCCESS);
 		case EAI_FAIL: REPORT_ERROR_AND_EXIT("DNS lookup failed", EXIT_SUCCESS);
@@ -137,8 +138,8 @@ void NetworkShepherd::accept() noexcept {
 	}
 }
 
-void bindCommunicatorToSourceAddress(const char* sourceAddress_string, IPVersionConstraint sourceAddressIPVersionConstraint) noexcept {
-	struct sockaddr sourceAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(sourceAddress_string, 0, sourceAddressIPVersionConstraint);
+void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourcePort, IPVersionConstraint sourceAddressIPVersionConstraint) noexcept {
+	struct sockaddr sourceAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(sourceAddress_string, sourcePort, sourceAddressIPVersionConstraint);
 
 	int enabler = true;
 	if (setsockopt(NetworkShepherd::communicatorSocket, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &enabler, sizeof(enabler)) == -1) {
@@ -148,14 +149,14 @@ void bindCommunicatorToSourceAddress(const char* sourceAddress_string, IPVersion
 	if (bind(NetworkShepherd::communicatorSocket, &sourceAddress, sizeof(sourceAddress)) == -1) {
 		switch (errno) {
 		case EACCES:
-			REPORT_ERROR_AND_EXIT("permission to bind socket to source address denied by local system", EXIT_SUCCESS);
+			REPORT_ERROR_AND_EXIT("permission to bind socket to source address/port denied by local system", EXIT_SUCCESS);
 		default:
-			REPORT_ERROR_AND_EXIT("bind socket to source address failed, unknown reason", EXIT_FAILURE);
+			REPORT_ERROR_AND_EXIT("bind socket to source address/port failed, unknown reason", EXIT_FAILURE);
 		}
 	}
 }
 
-void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress, IPVersionConstraint connectionIPVersionConstraint) noexcept {
+void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint connectionIPVersionConstraint) noexcept {
 	struct sockaddr connectionTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, connectionIPVersionConstraint);
 	
 	communicatorSocket = socket(connectionTargetAddress.sa_family, SOCK_STREAM, 0);
@@ -164,11 +165,11 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 	if (sourceAddress) {
 		if (connectionIPVersionConstraint == IPVersionConstraint::NONE) {
 			switch (connectionTargetAddress.sa_family) {
-			case AF_INET: bindCommunicatorToSourceAddress(sourceAddress, IPVersionConstraint::FOUR); break;
-			case AF_INET6: bindCommunicatorToSourceAddress(sourceAddress, IPVersionConstraint::SIX);
+			case AF_INET: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::FOUR); break;
+			case AF_INET6: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::SIX);
 			}
 		}
-		else { bindCommunicatorToSourceAddress(sourceAddress, connectionIPVersionConstraint); }
+		else { bindCommunicatorToSource(sourceAddress, sourcePort, connectionIPVersionConstraint); }
 	}
 
 	if (connect(communicatorSocket, &connectionTargetAddress, sizeof(connectionTargetAddress)) == -1) {
@@ -201,21 +202,29 @@ size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 
 void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 	while (true) {
-		ssize_t bytesWritten = ::write(communicatorSocket, buffer, buffer_size);
+		// NOTE: MSG_NOSIGNAL means don't send SIGPIPE to our process when EPIPE situations are encountered, just return EPIPE without sending signal (usually does both).
+		ssize_t bytesWritten = send(communicatorSocket, buffer, buffer_size, MSG_NOSIGNAL);
 		if (bytesWritten == buffer_size) { return; }
-		if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to communicator socket", EXIT_FAILURE); }
+		if (bytesWritten == -1) {
+			switch (errno) {
+			// NOTE: ECONNRESET is for when remote resets before our send queue can be emptied.
+			// NOTE: EPIPE is for when remote resets and our send queue is empty (last sent packet doesn't receive an ACK but still counts as sent).
+			case ECONNRESET: case EPIPE: REPORT_ERROR_AND_EXIT("failed to send to communicator socket, remote reset connection", EXIT_FAILURE);
+			default: REPORT_ERROR_AND_EXIT("failed to send to communicator socket, unknown reason", EXIT_FAILURE);
+			}
+		}
 		*(const char**)&buffer += bytesWritten;
 		buffer_size -= bytesWritten;
 	}
 }
 
 size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
-	ssize_t bytesRead = ::read(listenerSocket, buffer, buffer_size);
-	if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from listener socket", EXIT_FAILURE); }
+	ssize_t bytesRead = recv(listenerSocket, buffer, buffer_size, 0);		// NOTE: We use recv instead of read because read doesn't consume zero-length UDP packets and our program would hence get stuck if we used read.
+	if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to recv from listener socket, unknown reason", EXIT_FAILURE); }
 	return bytesRead;
 }
 
-void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, IPVersionConstraint senderIPVersionConstraint) noexcept {
+void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint senderIPVersionConstraint) noexcept {
 	UDPSenderTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, senderIPVersionConstraint);
 
 	communicatorSocket = socket(UDPSenderTargetAddress.sa_family, SOCK_DGRAM, 0);
@@ -231,11 +240,11 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 	if (sourceAddress) {
 		if (senderIPVersionConstraint == IPVersionConstraint::NONE) {
 			switch (UDPSenderTargetAddress.sa_family) {
-			case AF_INET: bindCommunicatorToSourceAddress(sourceAddress, IPVersionConstraint::FOUR); break;
-			case AF_INET6: bindCommunicatorToSourceAddress(sourceAddress, IPVersionConstraint::SIX);
+			case AF_INET: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::FOUR); break;
+			case AF_INET6: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::SIX);
 			}
 		}
-		else { bindCommunicatorToSourceAddress(sourceAddress, senderIPVersionConstraint); }
+		else { bindCommunicatorToSource(sourceAddress, sourcePort, senderIPVersionConstraint); }
 	}
 }
 
@@ -249,7 +258,9 @@ void NetworkShepherd::writeUDP(const void* buffer, size_t buffer_size) noexcept 
 	}
 }
 
-void NetworkShepherd::release() noexcept { }
+void NetworkShepherd::shutdownCommunicatorWrite() noexcept {
+	if (shutdown(communicatorSocket, SHUT_WR) == -1) { REPORT_ERROR_AND_EXIT("failed to shutdown communicator socket write", EXIT_FAILURE); }
+}
 
 void NetworkShepherd::closeCommunicator() noexcept {
 	if (close(communicatorSocket) == -1) { REPORT_ERROR_AND_EXIT("failed to close communicator socket", EXIT_FAILURE); }
@@ -260,3 +271,5 @@ void NetworkShepherd::closeListener() noexcept {
 		REPORT_ERROR_AND_EXIT("failed to close listener socket", EXIT_FAILURE);
 	}
 }
+
+void NetworkShepherd::release() noexcept { }

@@ -25,16 +25,18 @@ public:
 	static void listen(int backlogLength) noexcept;
 	static void accept() noexcept;
 
-	static void createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress, IPVersionConstraint connectionIPVersionConstraint) noexcept;
+	static void createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint connectionIPVersionConstraint) noexcept;
 
 	static size_t read(void* buffer, size_t buffer_size) noexcept;
 	static void write(const void* buffer, size_t buffer_size) noexcept;
 
 	static size_t readUDP(void* buffer, size_t buffer_size) noexcept;
 
-	static void createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, IPVersionConstraint senderIPVersionConstraint) noexcept;
+	static void createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint senderIPVersionConstraint) noexcept;
 
 	static void writeUDP(const void* buffer, size_t buffer_size) noexcept;
+
+	static void shutdownCommunicatorWrite() noexcept;
 
 	static void closeCommunicator() noexcept;
 
