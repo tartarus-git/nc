@@ -33,12 +33,11 @@ NOTE: About sockaddr and sockaddr_storage:
 */
 
 template <bool resolve_interfaces_instead_of_hostnames>
-sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint nodeAddressIPVersionConstraint) noexcept {
+struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint nodeAddressIPVersionConstraint) noexcept {
 	struct addrinfo addressRetrievalHint;
-	addressRetrievalHint.ai_family = AF_UNSPEC;
 	addressRetrievalHint.ai_socktype = 0;
 	addressRetrievalHint.ai_protocol = 0;
-	addressRetrievalHint.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG;
+	addressRetrievalHint.ai_flags = 0;
 
 	if (resolve_interfaces_instead_of_hostnames) {
 		struct ifaddrs* interfaceAddresses;
@@ -76,6 +75,12 @@ sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVersionCo
 		addressRetrievalHint.ai_flags |= AI_NUMERICHOST;
 	}
 
+	switch (nodeAddressIPVersionConstraint) {
+	case IPVersionConstraint::NONE: addressRetrievalHint.ai_family = AF_UNSPEC; break;
+	case IPVersionConstraint::FOUR: addressRetrievalHint.ai_family = AF_INET; break;
+	case IPVersionConstraint::SIX: addressRetrievalHint.ai_family = AF_INET6;
+	}
+
 	struct addrinfo* addressInfo;
 
 	switch (getaddrinfo(node, nullptr, &addressRetrievalHint, &addressInfo)) {
@@ -95,12 +100,10 @@ sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVersionCo
 		switch (nodeAddressIPVersionConstraint) {
 		case IPVersionConstraint::NONE:
 			if (info->ai_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr; break; }
-		case IPVersionConstraint::FOUR:
 			if (info->ai_addr->sa_family == AF_INET) { *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)info->ai_addr; break; }
 			continue;
-		case IPVersionConstraint::SIX:
-			if (info->ai_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr; break; }
-			continue;
+		case IPVersionConstraint::FOUR: *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)info->ai_addr; break;
+		case IPVersionConstraint::SIX: *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr;
 		}
 
 		((sockaddr_in*)&result_sockaddr)->sin_port = htons(port);
@@ -137,7 +140,7 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 		}
 	}
 
-	if (bind(listenerSocket, (const sockaddr*)&listenerAddress, sizeof(listenerAddress)) == -1) {		// TODO: Is the length thing here okay? Documentation is kind of lacking.
+	if (bind(listenerSocket, (const sockaddr*)&listenerAddress, sizeof(listenerAddress)) == -1) {
 		REPORT_ERROR_AND_EXIT("failed to bind listener socket", EXIT_FAILURE);
 	}
 }
