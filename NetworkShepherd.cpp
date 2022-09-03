@@ -20,22 +20,25 @@
 int NetworkShepherd::listenerSocket;
 int NetworkShepherd::communicatorSocket;
 
-struct sockaddr NetworkShepherd::UDPSenderTargetAddress;
+struct sockaddr_storage NetworkShepherd::UDPSenderTargetAddress;
+
+/*
+NOTE: About sockaddr and sockaddr_storage:
+	- sockaddr has generic data bytes inside of it (14 I think) to accomodate things like sockaddr_in.
+	- in that case, it works great, but with time, more complex sockaddr_x structures arose, and those didn't fit.
+	- backwards-compatibility is annoying in this case, which is why the current system is suboptimal:
+		- sockaddr_storage is what sockaddr should have been: It's guaranteed to have enough generic data bytes to
+			be able to contain every possible sockaddr_x. We use sockaddr_storage in this program because it works
+			with IPv6, since sockaddr_in6 doesn't fit inside sockaddr.
+*/
 
 template <bool resolve_interfaces_instead_of_hostnames>
-sockaddr construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint nodeAddressIPVersionConstraint) noexcept {
+sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint nodeAddressIPVersionConstraint) noexcept {
 	struct addrinfo addressRetrievalHint;
 	addressRetrievalHint.ai_family = AF_UNSPEC;
 	addressRetrievalHint.ai_socktype = 0;
 	addressRetrievalHint.ai_protocol = 0;
 	addressRetrievalHint.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG;
-
-	sa_family_t addressFamilyConstraint;
-	switch (nodeAddressIPVersionConstraint) {
-	case IPVersionConstraint::NONE: addressFamilyConstraint = AF_UNSPEC; break;
-	case IPVersionConstraint::FOUR: addressFamilyConstraint = AF_INET; break;
-	case IPVersionConstraint::SIX: addressFamilyConstraint = AF_INET6;
-	}
 
 	if (resolve_interfaces_instead_of_hostnames) {
 		struct ifaddrs* interfaceAddresses;
@@ -46,10 +49,19 @@ sockaddr construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint
 				if (std::strcmp(addr->ifa_name, node) == 0) {
 					if (!addr->ifa_addr) { continue; }
 
-					// TODO: Fix this broken logic somehow.
-					if (addressFamilyConstraint != AF_UNSPEC && addr->ifa_addr->sa_family != addressFamilyConstraint) { continue; }
+					struct sockaddr_storage result_sockaddr;
 
-					struct sockaddr result_sockaddr = *(addr->ifa_addr);			// TODO: Actually understand how sockaddr's work.
+					switch (nodeAddressIPVersionConstraint) {
+					case IPVersionConstraint::NONE:
+						if (addr->ifa_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)addr->ifa_addr; break; }
+					case IPVersionConstraint::FOUR:
+						if (addr->ifa_addr->sa_family == AF_INET) { *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)addr->ifa_addr; break; }
+						continue;
+					case IPVersionConstraint::SIX:
+						if (addr->ifa_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)addr->ifa_addr; break; }
+						continue;
+					}
+
 					((sockaddr_in*)&result_sockaddr)->sin_port = htons(port);
 
 					freeifaddrs(interfaceAddresses);
@@ -75,14 +87,22 @@ sockaddr construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint
 		case EAI_NONAME: REPORT_ERROR_AND_EXIT("invalid address/hostname/interface", EXIT_SUCCESS);
 		case EAI_SYSTEM: REPORT_ERROR_AND_EXIT("sockaddr construction failed, system error", EXIT_FAILURE);
 		default: REPORT_ERROR_AND_EXIT("sockaddr construction failed, unknown reason", EXIT_FAILURE);
-		// TODO: What you really should be doing is letting the OS translate error codes in the default case, just so the user can
-		// still get some information.
 	}
 
 	for (struct addrinfo* info = addressInfo; info->ai_next != nullptr; info = info->ai_next) {
-		if (addressFamilyConstraint != AF_UNSPEC && info->ai_addr->sa_family != addressFamilyConstraint) { continue; }
+		struct sockaddr_storage result_sockaddr;
 
-		struct sockaddr result_sockaddr = *(info->ai_addr);
+		switch (nodeAddressIPVersionConstraint) {
+		case IPVersionConstraint::NONE:
+			if (info->ai_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr; break; }
+		case IPVersionConstraint::FOUR:
+			if (info->ai_addr->sa_family == AF_INET) { *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)info->ai_addr; break; }
+			continue;
+		case IPVersionConstraint::SIX:
+			if (info->ai_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr; break; }
+			continue;
+		}
+
 		((sockaddr_in*)&result_sockaddr)->sin_port = htons(port);
 
 		freeaddrinfo(addressInfo);
@@ -95,14 +115,14 @@ sockaddr construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint
 void NetworkShepherd::init() noexcept { }
 
 void NetworkShepherd::createListener(const char* address, uint16_t port, int socketType, IPVersionConstraint listenerIPVersionConstraint) noexcept {
-	struct sockaddr listenerAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(address, port, listenerIPVersionConstraint);
+	struct sockaddr_storage listenerAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(address, port, listenerIPVersionConstraint);
 
-	listenerSocket = socket(listenerAddress.sa_family, socketType, 0);
+	listenerSocket = socket(listenerAddress.ss_family, socketType, 0);
 	if (listenerSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create listener socket", EXIT_FAILURE); }
 
 	switch (listenerIPVersionConstraint) {
 	case IPVersionConstraint::NONE:
-		if (listenerAddress.sa_family == AF_INET6) {
+		if (listenerAddress.ss_family == AF_INET6) {
 			int disabler = false;
 			if (setsockopt(listenerSocket, IPPROTO_IPV6, IPV6_V6ONLY, &disabler, sizeof(disabler)) == -1) {
 				REPORT_ERROR_AND_EXIT("failed to disable IPV6_V6ONLY with setsockopt", EXIT_FAILURE);
@@ -117,7 +137,7 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 		}
 	}
 
-	if (bind(listenerSocket, &listenerAddress, sizeof(listenerAddress)) == -1) {
+	if (bind(listenerSocket, (const sockaddr*)&listenerAddress, sizeof(listenerAddress)) == -1) {		// TODO: Is the length thing here okay? Documentation is kind of lacking.
 		REPORT_ERROR_AND_EXIT("failed to bind listener socket", EXIT_FAILURE);
 	}
 }
@@ -139,14 +159,14 @@ void NetworkShepherd::accept() noexcept {
 }
 
 void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourcePort, IPVersionConstraint sourceAddressIPVersionConstraint) noexcept {
-	struct sockaddr sourceAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(sourceAddress_string, sourcePort, sourceAddressIPVersionConstraint);
+	struct sockaddr_storage sourceAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(sourceAddress_string, sourcePort, sourceAddressIPVersionConstraint);
 
 	int enabler = true;
 	if (setsockopt(NetworkShepherd::communicatorSocket, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &enabler, sizeof(enabler)) == -1) {
 		REPORT_ERROR_AND_EXIT("failed to enable IP_BIND_ADDRESS_NO_PORT with setsockopt", EXIT_FAILURE);
 	}
 
-	if (bind(NetworkShepherd::communicatorSocket, &sourceAddress, sizeof(sourceAddress)) == -1) {
+	if (bind(NetworkShepherd::communicatorSocket, (const sockaddr*)&sourceAddress, sizeof(sourceAddress)) == -1) {
 		switch (errno) {
 		case EACCES:
 			REPORT_ERROR_AND_EXIT("permission to bind socket to source address/port denied by local system", EXIT_SUCCESS);
@@ -157,14 +177,14 @@ void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourceP
 }
 
 void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint connectionIPVersionConstraint) noexcept {
-	struct sockaddr connectionTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, connectionIPVersionConstraint);
+	struct sockaddr_storage connectionTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, connectionIPVersionConstraint);
 	
-	communicatorSocket = socket(connectionTargetAddress.sa_family, SOCK_STREAM, 0);
+	communicatorSocket = socket(connectionTargetAddress.ss_family, SOCK_STREAM, 0);
 	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to construct connection communicator socket", EXIT_FAILURE); }
 
 	if (sourceAddress) {
 		if (connectionIPVersionConstraint == IPVersionConstraint::NONE) {
-			switch (connectionTargetAddress.sa_family) {
+			switch (connectionTargetAddress.ss_family) {
 			case AF_INET: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::FOUR); break;
 			case AF_INET6: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::SIX);
 			}
@@ -172,7 +192,7 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 		else { bindCommunicatorToSource(sourceAddress, sourcePort, connectionIPVersionConstraint); }
 	}
 
-	if (connect(communicatorSocket, &connectionTargetAddress, sizeof(connectionTargetAddress)) == -1) {
+	if (connect(communicatorSocket, (const sockaddr*)&connectionTargetAddress, sizeof(connectionTargetAddress)) == -1) {
 		switch (errno) {
 			case EACCES: case EPERM:
 				REPORT_ERROR_AND_EXIT("failed to connect, local system blocked attempt", EXIT_FAILURE);
@@ -227,7 +247,7 @@ size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
 void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint senderIPVersionConstraint) noexcept {
 	UDPSenderTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, senderIPVersionConstraint);
 
-	communicatorSocket = socket(UDPSenderTargetAddress.sa_family, SOCK_DGRAM, 0);
+	communicatorSocket = socket(UDPSenderTargetAddress.ss_family, SOCK_DGRAM, 0);
 	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create UDP sender communicator socket", EXIT_FAILURE); }
 
 	if (allowBroadcast) {
@@ -239,7 +259,7 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 
 	if (sourceAddress) {
 		if (senderIPVersionConstraint == IPVersionConstraint::NONE) {
-			switch (UDPSenderTargetAddress.sa_family) {
+			switch (UDPSenderTargetAddress.ss_family) {
 			case AF_INET: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::FOUR); break;
 			case AF_INET6: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::SIX);
 			}
@@ -250,7 +270,7 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 
 void NetworkShepherd::writeUDP(const void* buffer, size_t buffer_size) noexcept {
 	while (true) {
-		ssize_t bytesSent = sendto(communicatorSocket, buffer, buffer_size, 0, &UDPSenderTargetAddress, sizeof(UDPSenderTargetAddress));
+		ssize_t bytesSent = sendto(communicatorSocket, buffer, buffer_size, 0, (const sockaddr*)&UDPSenderTargetAddress, sizeof(UDPSenderTargetAddress));
 		if (bytesSent == buffer_size) { return; }
 		if (bytesSent == -1) { REPORT_ERROR_AND_EXIT("failed to sendto on UDP sender communicator socket", EXIT_FAILURE); }
 		*(const char**)&buffer += bytesSent;

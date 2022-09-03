@@ -16,7 +16,7 @@ public:
 	static int listenerSocket;
 	static int communicatorSocket;
 
-	static struct sockaddr UDPSenderTargetAddress;
+	static struct sockaddr_storage UDPSenderTargetAddress;
 
 	static void init() noexcept;
 

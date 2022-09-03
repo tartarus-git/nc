@@ -72,7 +72,7 @@ int parseBacklog(const char* backlogString) noexcept {
 		unsigned char digit = backlogString[i] - '0';
 		if (digit > 9) { REPORT_ERROR_AND_EXIT("backlog input string is invalid", EXIT_SUCCESS); }
 		result = result * 10 + digit;
-		if (result > 0b01111111111111111111111111111111) { REPORT_ERROR_AND_EXIT("backlog input value too large", EXIT_SUCCESS); }		// TODO: Make sure this binary value is ok and also make sure that the unsigned to signed casting when returning works out.
+		if (result > 0b01111111111111111111111111111111) { REPORT_ERROR_AND_EXIT("backlog input value too large", EXIT_SUCCESS); }
 	}
 	return result;
 }
@@ -240,7 +240,7 @@ void do_UDP_send_and_close() noexcept {
 	// TODO: Actually, get MTU from kernel and calculate the optimal datagram size and use that as the buffer size.
 
 	char* buffer;
-	if (NetworkShepherd::UDPSenderTargetAddress.sa_family == AF_INET6) { buffer = new char[1280 - 40 - 8]; }		// TODO: Make these new's std::nothrow I guess, or switch to a better system.
+	if (NetworkShepherd::UDPSenderTargetAddress.ss_family == AF_INET6) { buffer = new char[1280 - 40 - 8]; }		// TODO: Make these new's std::nothrow I guess, or switch to a better system.
 	else { buffer = new char[68 - 20 - 8]; }
 
 	while (true) {
