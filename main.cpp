@@ -13,23 +13,23 @@ NOTE: Exit code is EXIT_SUCCESS on successful execution and on error resulting f
 Exit code is EXIT_FAILURE on every other error.
 */
 
-const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] [<address> <port>]\n" \
+const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] <address> <port>\n" \
 			"       nc --help\n" \
 			"\n" \
 			"function: nc (netcat) sends and receives data over a network (no flags: initiate TCP connection to <address> on <port>)\n" \
 			"\n" \
 			"arguments:\n" \
-				"\t--help                 --> show help text\n" \
-				"\t[-4 || -6]             --> force data transfer over IPv6/IPv4 (default: prefer IPv6)\n" \
-				"\t[-l]                   --> listen for connections on <address> and <port>\n" \
-				"\t[-k]                   --> (only valid with -l) keep listening after connection terminates\n" \
-				"\t[-u]                   --> use UDP (default: TCP)\n" \
-				"\t[-b]                   --> allow broadcast addresses\n" \
-				"\t[--source <source>]    --> (only valid without -l) send from <source> (can be IP/interface)\n" \
-				"\t[--port <source-port>] --> (only valid without -l and with --source*) send from <source-port>\n" \
-				"\t[--backlog <backlog-length>] --> (only valid with -k) set backlog length to <backlog-length>\n" \
-				"\t[<address>]            --> send to <address> or (with -l) listen on <address> (can be IP/hostname/interface)\n" \
-				"\t[<port>]               --> send to <port> or (with -l) listen on <port>\n" \
+				"\t--help                       --> show help text\n" \
+				"\t[-4 || -6]                   --> force data transfer over IPv6/IPv4\n" \
+				"\t[-l]                         --> listen for connections on <address> and <port>\n" \
+				"\t[-k]                         --> (only valid with -l) keep listening after connection terminates\n" \
+				"\t[-u]                         --> use UDP (default: TCP)\n" \
+				"\t[-b]                         --> (only valid with -u) allow broadcast addresses\n" \
+				"\t[--source <source>]          --> (only valid without -l) send from <source> (can be IP/interface)\n" \
+				"\t[--port <source-port>]       --> (only valid without -l and with --source*) send from <source-port>\n" \
+				"\t[--backlog <backlog-length>] --> (only valid with -k) set backlog length to <backlog-length>\n" /* TODO: Add default mention */ \
+				"\t<address>                    --> send to <address> or (with -l) listen on <address> (can be IP/hostname/interface)\n" \
+				"\t<port>                       --> send to <port> or (with -l) listen on <port>\n" \
 			"\n" \
 			"notes:\n" \
 				"\t* The exception to the rule is \"--port 0\". This is treated as a no-op and can also appear any amount of times\n" \
