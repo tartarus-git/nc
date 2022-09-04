@@ -8,6 +8,11 @@
 
 #include "error_reporting.h"
 
+/*
+NOTE: Exit code is EXIT_SUCCESS on successful execution and on error resulting from invalid args.
+Exit code is EXIT_FAILURE on every other error.
+*/
+
 const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] [<address> <port>]\n" \
 			"       nc --help\n" \
 			"\n" \
@@ -27,9 +32,15 @@ const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <sourc
 				"\t[<port>]               --> send to <port> or (with -l) listen on <port>\n" \
 			"\n" \
 			"notes:\n" \
-				"\t* The exception to the rule is \"--port 0\". This is treated as a no-op and can appear any amount of times.\n";
+				"\t* The exception to the rule is \"--port 0\". This is treated as a no-op and can also appear any amount of times\n" \
+				"\tas long as \"--port\" hasn't been specified to the left of it with a non-zero value.\n";
 
 // COMMAND-LINE PARSER START ---------------------------------------------------
+
+namespace arguments {
+	const char* destinationIP;
+	uint16_t destinationPort;
+}
 
 namespace flags {
 	const char* sourceIP = nullptr;
@@ -44,11 +55,6 @@ namespace flags {
 	bool shouldUseUDP = false;
 
 	bool allowBroadcast = false;
-}
-
-namespace arguments {
-	const char* destinationIP;
-	uint16_t destinationPort;
 }
 
 uint16_t parsePort(const char* portString) noexcept {
@@ -121,6 +127,33 @@ void parseLetterFlags(const char* flagContent) noexcept {
 	}
 }
 
+void validateFlagRelationships() noexcept {
+	if (flags::shouldListen) {
+		if (flags::allowBroadcast) { REPORT_ERROR_AND_EXIT("broadcast isn't allowed when listening", EXIT_SUCCESS); }
+
+		if (flags::shouldKeepListening) {
+			// TODO: Fix backlog system to default to 1 in the syscall?
+			if (flags::shouldUseUDP) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified with \"-u\"", EXIT_SUCCESS); }
+		} else {
+			if (flags::backlog != -1) { REPORT_ERROR_AND_EXIT("\"--backlog\" cannot be specified without \"-k\"", EXIT_SUCCESS); }
+		}
+
+		if (flags::sourceIP) { REPORT_ERROR_AND_EXIT("\"--source\" may not be used when listening", EXIT_SUCCESS); }
+
+		if (flags::sourcePort != 0) { REPORT_ERROR_AND_EXIT("\"--port\" may not be used when listening unless the specified source port is 0", EXIT_SUCCESS); }
+	} else {
+		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
+	}
+
+	if (!flags::shouldUseUDP) {
+		if (flags::allowBroadcast) { REPORT_ERROR_AND_EXIT("broadcast is only allowed when sending UDP packets", EXIT_SUCCESS); }
+	}
+
+	if (!flags::sourceIP) {
+		if (flags::sourcePort != 0) { REPORT_ERROR_AND_EXIT("\"--port\" cannot be specified without \"--source\" unless the specified source port is 0", EXIT_SUCCESS); }
+	}
+}
+
 void manageArgs(int argc, const char* const * argv) noexcept {
 	unsigned char normalArgCount = 0;
 	for (int i = 1; i < argc; i++) {
@@ -138,7 +171,7 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 						continue;
 					}
 					if (std::strcmp(flagContent, "port") == 0) {
-						if (flags::sourcePort != 0) { REPORT_ERROR_AND_EXIT("\"--port\" cannot be specified more than once", EXIT_SUCCESS); }
+						if (flags::sourcePort != 0) { REPORT_ERROR_AND_EXIT("\"--port\" cannot be specified more than once*", EXIT_SUCCESS); }
 						i++;
 						if (i == argc) { REPORT_ERROR_AND_EXIT("\"--port\" requires an input value", EXIT_SUCCESS); }
 						flags::sourcePort = parsePort(argv[i]);
@@ -160,10 +193,10 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 					}
 					REPORT_ERROR_AND_EXIT("one or more invalid flags specified", EXIT_SUCCESS);
 				}
-			default: parseLetterFlags(flagContent);
+			default: parseLetterFlags(flagContent); continue;
 			}
-			continue;
 		}
+
 		switch (normalArgCount) {
 		case 0: arguments::destinationIP = argv[i]; break;
 		case 1: arguments::destinationPort = parsePort(argv[i]); break;
@@ -174,28 +207,7 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 
 	if (normalArgCount < 2) { REPORT_ERROR_AND_EXIT("not enough non-flag args", EXIT_SUCCESS); }
 
-	if (flags::sourcePort != 0) {
-		if (flags::sourceIP == nullptr) {
-			REPORT_ERROR_AND_EXIT("\"--port\" cannot be specified without \"--source\" unless the specified source port is 0", EXIT_SUCCESS);
-		}
-	}
-
-	if (flags::backlog != -1) {
-		if (flags::shouldKeepListening == false) { REPORT_ERROR_AND_EXIT("\"--backlog\" cannot be specified without \"-k\"", EXIT_SUCCESS); }
-	}
-
-	if (!flags::shouldListen) {
-		if (flags::shouldKeepListening) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified without \"-l\"", EXIT_SUCCESS); }
-	} else {
-		if (flags::allowBroadcast) { REPORT_ERROR_AND_EXIT("broadcast isn't allowed when listening", EXIT_SUCCESS); }
-	}
-	if (!flags::shouldUseUDP) {
-		if (flags::allowBroadcast) { REPORT_ERROR_AND_EXIT("broadcast is only allowed when sending UDP packets", EXIT_SUCCESS); }
-	}
-	if (flags::shouldKeepListening) {
-		if (flags::shouldUseUDP) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified with \"-u\"", EXIT_SUCCESS); }
-	}
-	// TODO: Order the above checks to make the most sense efficiency and probability-wise and rethink which tests you want to nest and double-check and such.
+	validateFlagRelationships();
 }
 
 // COMMAND-LINE PARSER END -----------------------------------------------------

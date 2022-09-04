@@ -121,14 +121,14 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 	struct sockaddr_storage listenerAddress = construct_sockaddr<CSA_RESOLVE_INTERFACES>(address, port, listenerIPVersionConstraint);
 
 	listenerSocket = socket(listenerAddress.ss_family, socketType, 0);
-	if (listenerSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create listener socket", EXIT_FAILURE); }
+	if (listenerSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create TCP listener socket", EXIT_FAILURE); }
 
 	switch (listenerIPVersionConstraint) {
 	case IPVersionConstraint::NONE:
 		if (listenerAddress.ss_family == AF_INET6) {
 			int disabler = false;
 			if (setsockopt(listenerSocket, IPPROTO_IPV6, IPV6_V6ONLY, &disabler, sizeof(disabler)) == -1) {
-				REPORT_ERROR_AND_EXIT("failed to disable IPV6_V6ONLY with setsockopt", EXIT_FAILURE);
+				REPORT_ERROR_AND_EXIT("failed to disable IPV6_V6ONLY on TCP listener with setsockopt", EXIT_FAILURE);
 			}
 		}
 		break;
@@ -136,18 +136,24 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 	case IPVersionConstraint::SIX:
 		int enabler = true;
 		if (setsockopt(listenerSocket, IPPROTO_IPV6, IPV6_V6ONLY, &enabler, sizeof(enabler)) == -1) {
-			REPORT_ERROR_AND_EXIT("failed to enable IPV6_V6ONLY with setsockopt", EXIT_FAILURE);
+			REPORT_ERROR_AND_EXIT("failed to enable IPV6_V6ONLY on TCP listener with setsockopt", EXIT_FAILURE);
 		}
 	}
 
 	if (bind(listenerSocket, (const sockaddr*)&listenerAddress, sizeof(listenerAddress)) == -1) {
-		REPORT_ERROR_AND_EXIT("failed to bind listener socket", EXIT_FAILURE);
+		switch (errno) {
+		case EACCES: REPORT_ERROR_AND_EXIT("permission to bind TCP listener to address/port denied by local system", EXIT_FAILURE);
+		case EADDRINUSE:
+			if (port == 0) { REPORT_ERROR_AND_EXIT("bind TCP listener failed, no ephemeral ports available", EXIT_FAILURE); }
+			REPORT_ERROR_AND_EXIT("bind TCP listener failed, port occupied", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_EXIT("bind TCP listener to address/port failed, unknown reason", EXIT_FAILURE);
+		}
 	}
 }
 
 void NetworkShepherd::listen(int backlogLength) noexcept {
 	if (::listen(listenerSocket, backlogLength) == -1) {
-		REPORT_ERROR_AND_EXIT("failed to listen with listener socket", EXIT_FAILURE);
+		REPORT_ERROR_AND_EXIT("failed to listen with TCP listener socket", EXIT_FAILURE);
 	}
 }
 
@@ -155,9 +161,9 @@ void NetworkShepherd::accept() noexcept {
 	communicatorSocket = ::accept(listenerSocket, nullptr, nullptr);
 	if (communicatorSocket == -1) {
 		if (errno == ECONNABORTED) {
-			REPORT_ERROR_AND_EXIT("failed to accept connection because it was aborted", EXIT_SUCCESS);
+			REPORT_ERROR_AND_EXIT("TCP listener accept connection failed, connection aborted", EXIT_FAILURE);
 		}
-		REPORT_ERROR_AND_EXIT("failed to accept connection on listener socket", EXIT_FAILURE);
+		REPORT_ERROR_AND_EXIT("TCP listener accept connection failed, unknown reason", EXIT_FAILURE);
 	}
 }
 
@@ -166,15 +172,20 @@ void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourceP
 
 	int enabler = true;
 	if (setsockopt(NetworkShepherd::communicatorSocket, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &enabler, sizeof(enabler)) == -1) {
-		REPORT_ERROR_AND_EXIT("failed to enable IP_BIND_ADDRESS_NO_PORT with setsockopt", EXIT_FAILURE);
+		REPORT_ERROR_AND_EXIT("failed to enable IP_BIND_ADDRESS_NO_PORT on communicator with setsockopt", EXIT_FAILURE);
 	}
 
 	if (bind(NetworkShepherd::communicatorSocket, (const sockaddr*)&sourceAddress, sizeof(sourceAddress)) == -1) {
 		switch (errno) {
 		case EACCES:
-			REPORT_ERROR_AND_EXIT("permission to bind socket to source address/port denied by local system", EXIT_SUCCESS);
+			REPORT_ERROR_AND_EXIT("permission to bind communicator to source address/port denied by local system", EXIT_FAILURE);
+		case EADDRINUSE:
+			if (sourcePort == 0) {
+				REPORT_ERROR_AND_EXIT("bind communicator failed, no ephemeral source ports available", EXIT_FAILURE);
+			}
+			REPORT_ERROR_AND_EXIT("bind communicator failed, source port occupied", EXIT_FAILURE);
 		default:
-			REPORT_ERROR_AND_EXIT("bind socket to source address/port failed, unknown reason", EXIT_FAILURE);
+			REPORT_ERROR_AND_EXIT("bind communicator failed, unknown reason", EXIT_FAILURE);
 		}
 	}
 }
@@ -183,7 +194,7 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 	struct sockaddr_storage connectionTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, connectionIPVersionConstraint);
 	
 	communicatorSocket = socket(connectionTargetAddress.ss_family, SOCK_STREAM, 0);
-	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to construct connection communicator socket", EXIT_FAILURE); }
+	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to construct TCP connection communicator socket", EXIT_FAILURE); }
 
 	if (sourceAddress) {
 		if (connectionIPVersionConstraint == IPVersionConstraint::NONE) {
@@ -197,29 +208,31 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 
 	if (connect(communicatorSocket, (const sockaddr*)&connectionTargetAddress, sizeof(connectionTargetAddress)) == -1) {
 		switch (errno) {
-			case EACCES: case EPERM:
-				REPORT_ERROR_AND_EXIT("failed to connect, local system blocked attempt", EXIT_FAILURE);
-			case EADDRNOTAVAIL:
-				REPORT_ERROR_AND_EXIT("failed to connect, no ephemeral ports available", EXIT_FAILURE);
-			case ECONNREFUSED:
-				REPORT_ERROR_AND_EXIT("failed to connect, connection refused", EXIT_FAILURE);
-			case ENETUNREACH:
-				REPORT_ERROR_AND_EXIT("failed to connect, network unreachable", EXIT_FAILURE);
-			case ENETDOWN:
-				REPORT_ERROR_AND_EXIT("failed to connect, network down", EXIT_FAILURE);
-			case EHOSTUNREACH:
-				REPORT_ERROR_AND_EXIT("failed to connect, host unreachable", EXIT_FAILURE);
-			case ETIMEDOUT:
-				REPORT_ERROR_AND_EXIT("failed to connect, connection attempt timed out", EXIT_FAILURE);
-			default:
-				REPORT_ERROR_AND_EXIT("failed to connect, unknown reason", EXIT_FAILURE);
+		case EACCES: case EPERM: REPORT_ERROR_AND_EXIT("failed to connect, local system blocked attempt", EXIT_FAILURE);
+		case EADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, no ephemeral ports available", EXIT_FAILURE);
+		case ECONNREFUSED: REPORT_ERROR_AND_EXIT("failed to connect, connection refused", EXIT_FAILURE);
+		case ENETUNREACH: REPORT_ERROR_AND_EXIT("failed to connect, network unreachable", EXIT_FAILURE);
+		case ENETDOWN: REPORT_ERROR_AND_EXIT("failed to connect, network down", EXIT_FAILURE);
+		case EHOSTUNREACH: REPORT_ERROR_AND_EXIT("failed to connect, host unreachable", EXIT_FAILURE);
+		case ETIMEDOUT: REPORT_ERROR_AND_EXIT("failed to connect, connection attempt timed out", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_EXIT("failed to connect, unknown reason", EXIT_FAILURE);
 		}
 	}
 }
 
 size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 	ssize_t bytesRead = ::read(communicatorSocket, buffer, buffer_size);
-	if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from communicator socket", EXIT_FAILURE); }
+	if (bytesRead == -1) {
+		switch (errno) {
+		// NOTE: ECONNRESET also happens when the connected network changes.
+		// TODO: Actually, that might not be true, in the context of WSL, some things are kind of weird.
+		// You need to run this on actual hardware and see if other things like network disconnect also trigger ECONNRESET.
+		// Since a network change on the host doesn't actually affect the WSL instance, maybe Windows is sending ECONNRESET because of custom
+		// configuration.
+		case ECONNRESET: REPORT_ERROR_AND_EXIT("failed to read from communicator socket, remote reset connection", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_EXIT("failed to read from communicator socket, unknown reason", EXIT_FAILURE);
+		}
+	}
 	return bytesRead;
 }
 
@@ -231,9 +244,10 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 		if (bytesWritten == -1) {
 			switch (errno) {
 			// NOTE: ECONNRESET is for when remote resets before our send queue can be emptied.
+			// NOTE: ECONNRESET also gets triggered when the connected network changes.	TODO: Expand on this as above.
 			// NOTE: EPIPE is for when remote resets and our send queue is empty (last sent packet doesn't receive an ACK but still counts as sent).
-			case ECONNRESET: case EPIPE: REPORT_ERROR_AND_EXIT("failed to send to communicator socket, remote reset connection", EXIT_FAILURE);
-			default: REPORT_ERROR_AND_EXIT("failed to send to communicator socket, unknown reason", EXIT_FAILURE);
+			case ECONNRESET: case EPIPE: REPORT_ERROR_AND_EXIT("failed to send on communicator socket, remote reset connection", EXIT_FAILURE);
+			default: REPORT_ERROR_AND_EXIT("failed to send on communicator socket, unknown reason", EXIT_FAILURE);
 			}
 		}
 		*(const char**)&buffer += bytesWritten;
@@ -243,7 +257,7 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 
 size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
 	ssize_t bytesRead = recv(listenerSocket, buffer, buffer_size, 0);		// NOTE: We use recv instead of read because read doesn't consume zero-length UDP packets and our program would hence get stuck if we used read.
-	if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to recv from listener socket, unknown reason", EXIT_FAILURE); }
+	if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to recv from UDP listener socket, unknown reason", EXIT_FAILURE); }
 	return bytesRead;
 }
 
@@ -252,7 +266,7 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 	UDPSenderAddressFamily = targetAddress.ss_family;
 
 	communicatorSocket = socket(UDPSenderAddressFamily, SOCK_DGRAM, 0);
-	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create UDP sender communicator socket", EXIT_FAILURE); }
+	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create UDP sender socket", EXIT_FAILURE); }
 
 	if (allowBroadcast) {
 		int enabler = true;
@@ -272,16 +286,25 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 	}
 
 	if (connect(communicatorSocket, (const sockaddr*)&targetAddress, sizeof(targetAddress)) == -1) {
-		REPORT_ERROR_AND_EXIT("failed to connect UDP sender socket to target", EXIT_FAILURE);
+		switch (errno) {
+		case EACCES: case EPERM: REPORT_ERROR_AND_EXIT("failed to connect, local system blocked attempt", EXIT_FAILURE);
+		case EADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, no ephemeral ports available", EXIT_FAILURE);
+		// NOTE: These shouldn't happen for UDP.
+		//case ECONNREFUSED: REPORT_ERROR_AND_EXIT("failed to connect, connection refused", EXIT_FAILURE);
+		//case ENETUNREACH: REPORT_ERROR_AND_EXIT("failed to connect, network unreachable", EXIT_FAILURE);
+		//case ENETDOWN: REPORT_ERROR_AND_EXIT("failed to connect, network down", EXIT_FAILURE);
+		//case EHOSTUNREACH: REPORT_ERROR_AND_EXIT("failed to connect, host unreachable", EXIT_FAILURE);
+		//case ETIMEDOUT: REPORT_ERROR_AND_EXIT("failed to connect, connection attempt timed out", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_EXIT("failed to connect, unknown reason", EXIT_FAILURE);
+		}
 	}
-	// TODO: Look through error messages again and make sure that they're good.
 }
 
 void NetworkShepherd::writeUDP(const void* buffer, uint16_t buffer_size) noexcept {
 	while (true) {
 		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_size);
 		if (bytesSent == buffer_size) { return; }
-		if (bytesSent == -1) { REPORT_ERROR_AND_EXIT("failed to write to UDP sender communicator socket", EXIT_FAILURE); }
+		if (bytesSent == -1) { REPORT_ERROR_AND_EXIT("failed to write to UDP sender socket", EXIT_FAILURE); }
 		*(const char**)&buffer += bytesSent;
 		buffer_size -= bytesSent;
 	}
@@ -317,7 +340,7 @@ uint16_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, uint16_t buffer
 				buffer_chunk_size = getMSSApproximation();
 				result = buffer_chunk_size;
 				continue;
-			default: REPORT_ERROR_AND_EXIT("failed to write to UDP sender communicator socket", EXIT_FAILURE);
+			default: REPORT_ERROR_AND_EXIT("failed to write to UDP sender socket", EXIT_FAILURE);
 			}
 		}
 		*(const char**)&buffer += bytesSent;
@@ -336,9 +359,7 @@ void NetworkShepherd::closeCommunicator() noexcept {
 }
 
 void NetworkShepherd::closeListener() noexcept {
-	if (close(listenerSocket) == -1) {
-		REPORT_ERROR_AND_EXIT("failed to close listener socket", EXIT_FAILURE);
-	}
+	if (close(listenerSocket) == -1) { REPORT_ERROR_AND_EXIT("failed to close listener socket", EXIT_FAILURE); }
 }
 
 void NetworkShepherd::release() noexcept { }
