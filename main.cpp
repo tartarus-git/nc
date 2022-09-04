@@ -209,9 +209,11 @@ void do_UDP_receive() noexcept {
 	char buffer[65527];	// NOTE: We use the theoretical maximum data size for UDP packets here, since readUDP reads
 				// packet-wise and discards whatever we don't catch in the buffer.
 				// There isn't anything we can do about this AFAIK, we just try our best to get all the data.
-				// IPv6 allows UDP packets to be bigger than this buffer by a lot, but there isn't anything we
+				// IPv6 allows UDP packets to be bigger than this buffer by a lot (through weird extentions), but there isn't anything we
 				// can do about that either AFAIK (plus, no one in their right mind would make UDP packets bigger
 				// than a couple hundred bytes anyway).
+				// I don't even think those jumbogram things can get to this endpoint because we didn't tell the endpoint to
+				// accept those and I think they might require special treatment.
 				// Reason for all this: it's too complicated to extract data and buffer it, so kernel
 				// just only reads the current packet and discards the rest of packet if you didn't read enough.
 				// The reason why it's too complicated is because UDP packets can come from many sources at once.
@@ -220,6 +222,11 @@ void do_UDP_receive() noexcept {
 				// then the API becomes almost useless for the user in a lot of cases, because it's impossible
 				// to determine which part of the byte stream came from which remote.
 				// Basically, the fact that UDP is connectionless forces this on us.
+
+				// NOTE: Actually, you can "connect" a UDP socket so that it only receives data from one endpoint.
+				// In that case, a more streamed reading system would be possible, but I assume Linux doesn't work this way
+				// because it would be confusing and annoying to have the behaviour change around just like that.
+				// I'm not sure though, maybe you can research it a bit more. TODO.
 	while (true) {
 		size_t bytesRead = NetworkShepherd::readUDP(buffer, sizeof(buffer));
 		if (bytesRead == 0) { continue; }
@@ -235,9 +242,11 @@ void do_UDP_receive() noexcept {
 }
 
 void do_UDP_send_and_close() noexcept {
+	// NOTE: I'm not totally sure if these MTU setsockopt things work for IPv6 as well, since the documentation was unclear.
+	// NOTE: If you end up getting problems with IPv6 MTU stuff, I'll just have to implement a distinct IPv6 version of the MTU stuff, not hard.
 	NetworkShepherd::enableFindMSS();
 
-	size_t buffer_size = NetworkShepherd::getMSSApproximation();	// TODO: Test if this is to do with interfaces and if your code works with source and everything.
+	uint16_t buffer_size = NetworkShepherd::getMSSApproximation();
 	char* buffer = new (std::nothrow) char[buffer_size];
 	if (!buffer) { REPORT_ERROR_AND_EXIT("failed to allocate buffer", EXIT_FAILURE); }
 
@@ -246,8 +255,8 @@ void do_UDP_send_and_close() noexcept {
 		if (bytesRead == 0) { break; }
 		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
 
-		size_t newMSS = NetworkShepherd::writeUDPAndFindMSS(buffer, bytesRead);
-		if (newMSS == 0) { continue; }
+		uint16_t newMSS = NetworkShepherd::writeUDPAndFindMSS(buffer, bytesRead);
+		if (newMSS == 0) { continue; }		// NOTE: newMSS == 0 means MSS stays the same.
 
 		delete[] buffer;
 		buffer = new (std::nothrow) char[newMSS];

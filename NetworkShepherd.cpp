@@ -276,7 +276,7 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 	// TODO: Look through error messages again and make sure that they're good.
 }
 
-void NetworkShepherd::writeUDP(const void* buffer, size_t buffer_size) noexcept {
+void NetworkShepherd::writeUDP(const void* buffer, uint16_t buffer_size) noexcept {
 	while (true) {
 		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_size);
 		if (bytesSent == buffer_size) { return; }
@@ -303,10 +303,10 @@ void NetworkShepherd::enableFindMSS() noexcept {
 	}
 }
 
-size_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, size_t buffer_size) noexcept {
-	size_t buffer_chunk_size = buffer_size;
+uint16_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, uint16_t buffer_size) noexcept {
+	uint16_t buffer_chunk_size = buffer_size;
 	const char* buffer_end = *(const char**)&buffer + buffer_size;
-	size_t result = 0;
+	uint16_t result = 0;
 	while (true) {
 		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_chunk_size);
 		if (bytesSent == buffer_chunk_size) { return result; }

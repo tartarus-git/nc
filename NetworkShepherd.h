@@ -39,13 +39,13 @@ public:
 
 	static void createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint senderIPVersionConstraint) noexcept;
 
-	static void writeUDP(const void* buffer, size_t buffer_size) noexcept;
+	static void writeUDP(const void* buffer, uint16_t buffer_size) noexcept;
 
 	static uint16_t getMSSApproximation() noexcept;
 
 	static void enableFindMSS() noexcept;
 
-	static size_t writeUDPAndFindMSS(const void* buffer, size_t buffer_size) noexcept;
+	static uint16_t writeUDPAndFindMSS(const void* buffer, uint16_t buffer_size) noexcept;
 
 	static void shutdownCommunicatorWrite() noexcept;
 
