@@ -14,9 +14,6 @@
 
 #include "error_reporting.h"
 
-#define CSA_RESOLVE_INTERFACES true
-#define CSA_RESOLVE_HOSTNAMES false
-
 int NetworkShepherd::listenerSocket;
 int NetworkShepherd::communicatorSocket;
 
@@ -31,6 +28,9 @@ NOTE: About sockaddr and sockaddr_storage:
 			be able to contain every possible sockaddr_x. We use sockaddr_storage in this program because it works
 			with IPv6, since sockaddr_in6 doesn't fit inside sockaddr.
 */
+
+#define CSA_RESOLVE_INTERFACES true
+#define CSA_RESOLVE_HOSTNAMES false
 
 template <bool resolve_interfaces_instead_of_hostnames>
 struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVersionConstraint nodeAddressIPVersionConstraint) noexcept {
