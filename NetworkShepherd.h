@@ -41,6 +41,12 @@ public:
 
 	static void writeUDP(const void* buffer, size_t buffer_size) noexcept;
 
+	static uint16_t getMSSApproximation() noexcept;
+
+	static void enableFindMSS() noexcept;
+
+	static size_t writeUDPAndFindMSS(const void* buffer, size_t buffer_size) noexcept;
+
 	static void shutdownCommunicatorWrite() noexcept;
 
 	static void closeCommunicator() noexcept;

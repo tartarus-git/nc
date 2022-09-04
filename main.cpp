@@ -235,19 +235,24 @@ void do_UDP_receive() noexcept {
 }
 
 void do_UDP_send_and_close() noexcept {
-	//char buffer[BUFSIZ];		// TODO: Add an if somewhere so that it caps at the max packet length or something.
-					// That way the sendto call wont fail because it doesn't fit in a packet.
-	// TODO: Actually, get MTU from kernel and calculate the optimal datagram size and use that as the buffer size.
+	NetworkShepherd::enableFindMSS();
 
-	char* buffer;
-	if (NetworkShepherd::UDPSenderTargetAddress.ss_family == AF_INET6) { buffer = new char[1280 - 40 - 8]; }		// TODO: Make these new's std::nothrow I guess, or switch to a better system.
-	else { buffer = new char[68 - 20 - 8]; }
+	size_t buffer_size = NetworkShepherd::getMSSApproximation();	// TODO: Test if this is to do with interfaces and if your code works with source and everything.
+	char* buffer = new (std::nothrow) char[buffer_size];
+	if (!buffer) { REPORT_ERROR_AND_EXIT("failed to allocate buffer", EXIT_FAILURE); }
 
 	while (true) {
-		ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer));		// TODO: Fix this if you end up keeping this bad system.
+		ssize_t bytesRead = read(STDIN_FILENO, buffer, buffer_size);
 		if (bytesRead == 0) { break; }
 		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
-		NetworkShepherd::writeUDP(buffer, bytesRead);
+
+		size_t newMSS = NetworkShepherd::writeUDPAndFindMSS(buffer, bytesRead);
+		if (newMSS == 0) { continue; }
+
+		delete[] buffer;
+		buffer = new (std::nothrow) char[newMSS];
+		if (!buffer) { REPORT_ERROR_AND_EXIT("failed to reallocate buffer", EXIT_FAILURE); }
+		buffer_size = newMSS;
 	}
 
 	NetworkShepherd::closeCommunicator();

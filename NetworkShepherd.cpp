@@ -17,7 +17,7 @@
 int NetworkShepherd::listenerSocket;
 int NetworkShepherd::communicatorSocket;
 
-struct sockaddr_storage NetworkShepherd::UDPSenderTargetAddress;
+struct sockaddr_storage NetworkShepherd::UDPSenderTargetAddress;	// TODO: Consider removing this.
 
 /*
 NOTE: About sockaddr and sockaddr_storage:
@@ -269,16 +269,61 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 		}
 		else { bindCommunicatorToSource(sourceAddress, sourcePort, senderIPVersionConstraint); }
 	}
+
+	if (connect(communicatorSocket, (const sockaddr*)&UDPSenderTargetAddress, sizeof(UDPSenderTargetAddress)) == -1) {
+		REPORT_ERROR_AND_EXIT("failed to connect UDP sender socket to target", EXIT_FAILURE);
+	}
+	// TODO: Look through error messages again and make sure that they're good.
 }
 
 void NetworkShepherd::writeUDP(const void* buffer, size_t buffer_size) noexcept {
 	while (true) {
-		ssize_t bytesSent = sendto(communicatorSocket, buffer, buffer_size, 0, (const sockaddr*)&UDPSenderTargetAddress, sizeof(UDPSenderTargetAddress));
+		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_size);
 		if (bytesSent == buffer_size) { return; }
-		if (bytesSent == -1) { REPORT_ERROR_AND_EXIT("failed to sendto on UDP sender communicator socket", EXIT_FAILURE); }
+		if (bytesSent == -1) { REPORT_ERROR_AND_EXIT("failed to write to UDP sender communicator socket", EXIT_FAILURE); }
 		*(const char**)&buffer += bytesSent;
 		buffer_size -= bytesSent;
 	}
+}
+
+uint16_t NetworkShepherd::getMSSApproximation() noexcept {
+	int MTU;
+	socklen_t MTU_buffer_size = sizeof(MTU);
+	if (getsockopt(communicatorSocket, IPPROTO_IP, IP_MTU, &MTU, &MTU_buffer_size) == -1) {
+		REPORT_ERROR_AND_EXIT("failed to get MTU from UDP sender socket with getsockopt", EXIT_FAILURE);
+	}
+	if (UDPSenderTargetAddress.ss_family == AF_INET) { return MTU - 20 - 8; }
+	return MTU - 40 - 8;
+}
+
+void NetworkShepherd::enableFindMSS() noexcept {
+	int doMTUDiscovery = IP_PMTUDISC_DO;
+	if (setsockopt(communicatorSocket, IPPROTO_IP, IP_MTU_DISCOVER, &doMTUDiscovery, sizeof(doMTUDiscovery)) == -1) {
+		REPORT_ERROR_AND_EXIT("failed to enable MTU discovery on UDP sender socket with setsockopt", EXIT_FAILURE);
+	}
+}
+
+size_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, size_t buffer_size) noexcept {
+	size_t buffer_chunk_size = buffer_size;
+	const char* buffer_end = *(const char**)&buffer + buffer_size;
+	size_t result = 0;
+	while (true) {
+		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_chunk_size);
+		if (bytesSent == buffer_chunk_size) { return result; }
+		if (bytesSent == -1) {
+			switch (errno) {
+			case EMSGSIZE:
+				buffer_chunk_size = getMSSApproximation();
+				result = buffer_chunk_size;
+				continue;
+			default: REPORT_ERROR_AND_EXIT("failed to write to UDP sender communicator socket", EXIT_FAILURE);
+			}
+		}
+		*(const char**)&buffer += bytesSent;
+		buffer_size = buffer_end - *(const char**)&buffer;
+		if (buffer_size < buffer_chunk_size) { buffer_chunk_size = buffer_size; }
+	}
+	return result;
 }
 
 void NetworkShepherd::shutdownCommunicatorWrite() noexcept {
