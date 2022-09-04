@@ -17,7 +17,7 @@
 int NetworkShepherd::listenerSocket;
 int NetworkShepherd::communicatorSocket;
 
-struct sockaddr_storage NetworkShepherd::UDPSenderTargetAddress;	// TODO: Consider removing this.
+sa_family_t NetworkShepherd::UDPSenderAddressFamily;
 
 /*
 NOTE: About sockaddr and sockaddr_storage:
@@ -248,9 +248,10 @@ size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
 }
 
 void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint senderIPVersionConstraint) noexcept {
-	UDPSenderTargetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, senderIPVersionConstraint);
+	struct sockaddr_storage targetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, senderIPVersionConstraint);
+	UDPSenderAddressFamily = targetAddress.ss_family;
 
-	communicatorSocket = socket(UDPSenderTargetAddress.ss_family, SOCK_DGRAM, 0);
+	communicatorSocket = socket(UDPSenderAddressFamily, SOCK_DGRAM, 0);
 	if (communicatorSocket == -1) { REPORT_ERROR_AND_EXIT("failed to create UDP sender communicator socket", EXIT_FAILURE); }
 
 	if (allowBroadcast) {
@@ -262,7 +263,7 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 
 	if (sourceAddress) {
 		if (senderIPVersionConstraint == IPVersionConstraint::NONE) {
-			switch (UDPSenderTargetAddress.ss_family) {
+			switch (UDPSenderAddressFamily) {
 			case AF_INET: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::FOUR); break;
 			case AF_INET6: bindCommunicatorToSource(sourceAddress, sourcePort, IPVersionConstraint::SIX);
 			}
@@ -270,7 +271,7 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 		else { bindCommunicatorToSource(sourceAddress, sourcePort, senderIPVersionConstraint); }
 	}
 
-	if (connect(communicatorSocket, (const sockaddr*)&UDPSenderTargetAddress, sizeof(UDPSenderTargetAddress)) == -1) {
+	if (connect(communicatorSocket, (const sockaddr*)&targetAddress, sizeof(targetAddress)) == -1) {
 		REPORT_ERROR_AND_EXIT("failed to connect UDP sender socket to target", EXIT_FAILURE);
 	}
 	// TODO: Look through error messages again and make sure that they're good.
@@ -292,7 +293,7 @@ uint16_t NetworkShepherd::getMSSApproximation() noexcept {
 	if (getsockopt(communicatorSocket, IPPROTO_IP, IP_MTU, &MTU, &MTU_buffer_size) == -1) {
 		REPORT_ERROR_AND_EXIT("failed to get MTU from UDP sender socket with getsockopt", EXIT_FAILURE);
 	}
-	if (UDPSenderTargetAddress.ss_family == AF_INET) { return MTU - 20 - 8; }
+	if (UDPSenderAddressFamily == AF_INET) { return MTU - 20 - 8; }
 	return MTU - 40 - 8;
 }
 
