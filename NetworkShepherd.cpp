@@ -41,6 +41,9 @@ using socket_t = SOCKET;
 
 using socklen_t = int;
 
+// TODO: Also, explore all the possible error codes for send and recv and all those calls, use the windows manpages
+// for inspiration. Maybe you should do a couple real-world "stress-tests" to see which errors you actually need to handle specifically.
+
 #define GET_LAST_ERROR WSAGetLastError()
 #endif
 
