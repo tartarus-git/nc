@@ -1,22 +1,38 @@
 #include <cstdlib>		// for EXIT_SUCCESS and EXIT_FAILURE, as well as every syscall we use
 #include <cstdint>		// for fixed-width integer types
 #include <cstring>		// for std::strcmp
-#include <unistd.h>		// for linux I/O
 #include <thread>		// for multi-threading
 
 #include "NetworkShepherd.h"	// for NetworkShepherd class, which serves as our interface with the network
 
 #include "error_reporting.h"
 
+#ifndef PLATFORM_WINDOWS
+#include <unistd.h>		// for Linux I/O
+#else
+#include <io.h>			// for Windows I/O
+
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1		// TODO: Make sure these are right.
+
+#define write(...) _write(__VA_ARGS__)
+#define read(...) _read(__VA_ARGS__)
+#endif
+
 /*
 NOTE: Exit code is EXIT_SUCCESS on successful execution and on error resulting from invalid args.
 Exit code is EXIT_FAILURE on every other error.
 */
 
+// NOTE: I don't think there is a good way to #ifdef inside of multi-line strings in C/C++, which is why we opted to just change
+// the help text here.
+
 const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] <address> <port>\n" \
 			"       nc --help\n" \
 			"\n" \
 			"function: nc (netcat) sends and receives data over a network (no flags: initiate TCP connection to <address> on <port>)\n" \
+			"\n" \
+			"IMPORTANT: On Windows, interface recognition is disabled. Only hostnames and IPs are valid.\n" \
 			"\n" \
 			"arguments:\n" \
 				"\t--help                       --> show help text\n" \

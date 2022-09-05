@@ -1,8 +1,16 @@
 #pragma once
 
+#include <cstdint>
+
+#ifndef PLATFORM_WINDOWS
 #include <sys/socket.h>
 
-#include <cstdint>
+using socket_t = int;
+#else
+#include <winsock2.h>
+
+using socket_t = SOCKET;
+#endif
 
 // NOTE: I guess you could get rid of this and use AF_UNSPEC, AF_INET and AF_INET6 throughout the code.
 // NOTE: That would be more efficient in some places, but I think in the grand scheme of things,
@@ -17,9 +25,13 @@ enum class IPVersionConstraint : uint8_t {
 };
 
 class NetworkShepherd {
+#ifdef PLATFORM_WINDOWS
+	static struct WSADATA WSAData;
+#endif
+
 public:
-	static int listenerSocket;
-	static int communicatorSocket;
+	static socket_t listenerSocket;
+	static socket_t communicatorSocket;
 
 	static sa_family_t UDPSenderAddressFamily;
 
