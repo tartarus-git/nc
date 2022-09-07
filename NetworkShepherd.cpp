@@ -17,9 +17,6 @@
 
 using ssize_t = int;
 
-#define read(...) _read(__VA_ARGS__)
-#define write(...) _write(__VA_ARGS__)
-
 #endif
 
 #ifndef PLATFORM_WINDOWS
@@ -54,13 +51,13 @@ using sockaddr_storage_family_t = short;
 #endif
 
 #ifdef PLATFORM_WINDOWS
-#pragma comment(lib, "Wsa2_32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 #endif
 
 #include "error_reporting.h"
 
 #ifdef PLATFORM_WINDOWS
-struct WSADATA NetworkShepherd::WSAData;
+WSADATA NetworkShepherd::WSAData;
 #endif
 
 socket_t NetworkShepherd::listenerSocket;
@@ -406,7 +403,7 @@ size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 #ifndef PLATFORM_WINDOWS
 	ssize_t bytesRead = ::read(communicatorSocket, buffer, buffer_size);
 #else
-	ssize_t bytesRead = recv(communicatorSocket, buffer, buffer_size, 0);
+	ssize_t bytesRead = recv(communicatorSocket, (char*)buffer, buffer_size, 0);
 #endif
 	if (bytesRead == SOCKET_ERROR) {
 		switch (GET_LAST_ERROR) {
@@ -436,7 +433,7 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 		// NOTE: MSG_NOSIGNAL means don't send SIGPIPE to our process when EPIPE situations are encountered, just return EPIPE without sending signal (usually does both).
 		ssize_t bytesWritten = send(communicatorSocket, buffer, buffer_size, MSG_NOSIGNAL);
 #else
-		ssize_t bytesWritten = send(communicatorSocket, buffer, buffer_size, 0);
+		ssize_t bytesWritten = send(communicatorSocket, (const char*)buffer, buffer_size, 0);
 #endif
 		if (bytesWritten == buffer_size) { return; }
 		if (bytesWritten == SOCKET_ERROR) {
@@ -461,7 +458,7 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 }
 
 size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
-	ssize_t bytesRead = recv(listenerSocket, buffer, buffer_size, 0);		// NOTE: We use recv instead of read because read doesn't consume zero-length UDP packets and our program would hence get stuck if we used read.
+	ssize_t bytesRead = recv(listenerSocket, (char*)buffer, buffer_size, 0);		// NOTE: We use recv instead of read because read doesn't consume zero-length UDP packets and our program would hence get stuck if we used read.
 	if (bytesRead == SOCKET_ERROR) { REPORT_ERROR_AND_EXIT("failed to recv from UDP listener socket, unknown reason", EXIT_FAILURE); }
 	return bytesRead;
 }
@@ -520,7 +517,7 @@ void NetworkShepherd::writeUDP(const void* buffer, uint16_t buffer_size) noexcep
 #ifndef PLATFORM_WINDOWS
 		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_size);
 #else
-		ssize_t bytesSent = send(communicatorSocket, buffer, buffer_size, 0);
+		ssize_t bytesSent = send(communicatorSocket, (char*)buffer, buffer_size, 0);
 #endif
 		if (bytesSent == buffer_size) { return; }
 		if (bytesSent == SOCKET_ERROR) { REPORT_ERROR_AND_EXIT("failed to write to UDP sender socket", EXIT_FAILURE); }
@@ -554,7 +551,7 @@ uint16_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, uint16_t buffer
 #ifndef PLATFORM_WINDOWS
 		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_chunk_size);
 #else
-		ssize_t bytesSent = send(communicatorSocket, buffer, buffer_chunk_size, 0);
+		ssize_t bytesSent = send(communicatorSocket, (char*)buffer, buffer_chunk_size, 0);
 #endif
 		if (bytesSent == buffer_chunk_size) { return result; }
 		if (bytesSent == SOCKET_ERROR) {
@@ -609,6 +606,6 @@ void NetworkShepherd::closeListener() noexcept {
 
 void NetworkShepherd::release() noexcept {
 #ifdef PLATFORM_WINDOWS
-	if (WSACleanup() == SOCKET_ERROR) { REPORT_ERROR_AND_EXIT("WSACleanup failed"); }
+	if (WSACleanup() == SOCKET_ERROR) { REPORT_ERROR_AND_EXIT("WSACleanup failed", EXIT_FAILURE); }
 #endif
 }

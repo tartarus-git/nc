@@ -28,7 +28,7 @@ enum class IPVersionConstraint : uint8_t {
 
 class NetworkShepherd {
 #ifdef PLATFORM_WINDOWS
-	static struct WSADATA WSAData;
+	static WSADATA WSAData;
 #endif
 
 public:
