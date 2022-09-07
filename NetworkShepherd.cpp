@@ -181,13 +181,15 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 		default: REPORT_ERROR_AND_EXIT("sockaddr construction failed, unknown reason", EXIT_FAILURE);
 	}
 
-	for (struct addrinfo* info = addressInfo; info->ai_next != nullptr; info = info->ai_next) {
+	for (struct addrinfo* info = addressInfo; ; info = info->ai_next) {
 		struct sockaddr_storage result_sockaddr;
 
 		switch (nodeAddressIPVersionConstraint) {
 		case IPVersionConstraint::NONE:
 			if (info->ai_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr; break; }
 			if (info->ai_addr->sa_family == AF_INET) { *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)info->ai_addr; break; }
+
+			if (!info->ai_next) { break; }
 			continue;
 		case IPVersionConstraint::FOUR: *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)info->ai_addr; break;
 		case IPVersionConstraint::SIX: *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr;
@@ -199,7 +201,7 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 
 		return result_sockaddr;
 	}
-	REPORT_ERROR_AND_EXIT("either specified IP or IPs of specified hostname don't satisfy IP version constraint", EXIT_SUCCESS);
+	REPORT_ERROR_AND_EXIT("hostname does not possess any IP addresses", EXIT_SUCCESS);
 }
 
 void NetworkShepherd::createListener(const char* address, uint16_t port, int socketType, IPVersionConstraint listenerIPVersionConstraint) noexcept {
@@ -526,19 +528,51 @@ void NetworkShepherd::writeUDP(const void* buffer, uint16_t buffer_size) noexcep
 	}
 }
 
+// NOTE: The following two functions (just like all the other ones (that I can think of)) can only be called after communicatorSocket is created.
+
 uint16_t NetworkShepherd::getMSSApproximation() noexcept {
+#ifndef PLATFORM_WINDOWS
 	int MTU;
+#else
+	DWORD MTU;
+#endif
 	socklen_t MTU_buffer_size = sizeof(MTU);
-	if (getsockopt(communicatorSocket, IPPROTO_IP, IP_MTU, (char*)&MTU, &MTU_buffer_size) == -1) {
+
+	int level;
+	int optname;
+	if (UDPSenderAddressFamily == AF_INET6) {
+		level = IPPROTO_IPV6;
+		optname = IPV6_MTU;
+	} else {
+		level = IPPROTO_IP;
+		optname = IP_MTU;
+	}
+
+	if (getsockopt(communicatorSocket, level, optname, (char*)&MTU, &MTU_buffer_size) == SOCKET_ERROR) {
 		REPORT_ERROR_AND_EXIT("failed to get MTU from UDP sender socket with getsockopt", EXIT_FAILURE);
 	}
-	if (UDPSenderAddressFamily == AF_INET) { return MTU - 20 - 8; }
-	return MTU - 40 - 8;
+
+	return UDPSenderAddressFamily == AF_INET6 ? MTU - 40 - 8 : MTU - 20 - 8;
 }
 
 void NetworkShepherd::enableFindMSS() noexcept {
+#ifndef PLATFORM_WINDOWS
 	int doMTUDiscovery = IP_PMTUDISC_DO;
-	if (setsockopt(communicatorSocket, IPPROTO_IP, IP_MTU_DISCOVER, (const char*)&doMTUDiscovery, sizeof(doMTUDiscovery)) == -1) {
+#else
+	DWORD doMTUDiscovery = IP_PMTUDISC_DO;
+#endif
+
+	int level;
+	int optname;
+	if (UDPSenderAddressFamily == AF_INET6) {
+		level = IPPROTO_IPV6;
+		optname = IPV6_MTU_DISCOVER;
+	} else {
+		level = IPPROTO_IP;
+		optname = IP_MTU_DISCOVER;
+	}
+
+	if (setsockopt(communicatorSocket, level, optname, (const char*)&doMTUDiscovery, sizeof(doMTUDiscovery)) == SOCKET_ERROR) {
 		REPORT_ERROR_AND_EXIT("failed to enable MTU discovery on UDP sender socket with setsockopt", EXIT_FAILURE);
 	}
 }
