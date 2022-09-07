@@ -6,10 +6,12 @@
 #include <sys/socket.h>
 
 using socket_t = int;
+using sockaddr_storage_family_t = sa_family_t;
 #else
 #include <winsock2.h>
 
 using socket_t = SOCKET;
+using sockaddr_storage_family_t = short;
 #endif
 
 // NOTE: I guess you could get rid of this and use AF_UNSPEC, AF_INET and AF_INET6 throughout the code.
@@ -33,7 +35,7 @@ public:
 	static socket_t listenerSocket;
 	static socket_t communicatorSocket;
 
-	static sa_family_t UDPSenderAddressFamily;
+	static sockaddr_storage_family_t UDPSenderAddressFamily;
 
 	static void init() noexcept;
 

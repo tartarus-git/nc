@@ -3,13 +3,13 @@
 #include <cstdint>
 #include <cstring>
 
-#include <cerrno>
-
-#include "error_reporting.h"
-
 #ifndef PLATFORM_WINDOWS
+
+#include <cerrno>
 #include <unistd.h>
+
 #else
+
 #include <io.h>
 
 #define STDIN_FILENO 0
@@ -19,37 +19,45 @@ using ssize_t = int;
 
 #define read(...) _read(__VA_ARGS__)
 #define write(...) _write(__VA_ARGS__)
+
 #endif
 
 #ifndef PLATFORM_WINDOWS
+
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <ifaddrs.h>
 #include <netdb.h>
 
 using socket_t = int;
+using sockaddr_storage_family_t = sa_family_t;
 
 #define INVALID_SOCKET -1
 #define SOCKET_ERROR -1
 
 #define GET_LAST_ERROR errno
+
 #else
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
 using socket_t = SOCKET;
-
 using socklen_t = int;
+using sockaddr_storage_family_t = short;
 
 // TODO: Also, explore all the possible error codes for send and recv and all those calls, use the windows manpages
 // for inspiration. Maybe you should do a couple real-world "stress-tests" to see which errors you actually need to handle specifically.
 
 #define GET_LAST_ERROR WSAGetLastError()
+
 #endif
 
 #ifdef PLATFORM_WINDOWS
 #pragma comment(lib, "Wsa2_32.lib")
 #endif
+
+#include "error_reporting.h"
 
 #ifdef PLATFORM_WINDOWS
 struct WSADATA NetworkShepherd::WSAData;
@@ -58,9 +66,7 @@ struct WSADATA NetworkShepherd::WSAData;
 socket_t NetworkShepherd::listenerSocket;
 socket_t NetworkShepherd::communicatorSocket;
 
-// TODO: Along with whatever other TODO's are still spread out across the files, we still need to change this sa_family_t thing and make sure
-// the headers and the ifdefs are correct everywhere. We also need to handle the UDP question and the backlog question.
-sa_family_t NetworkShepherd::UDPSenderAddressFamily;
+sockaddr_storage_family_t NetworkShepherd::UDPSenderAddressFamily;
 
 void NetworkShepherd::init() noexcept {
 #ifdef PLATFORM_WINDOWS
@@ -89,7 +95,7 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 
 	struct addrinfo addressRetrievalHint;
 
-#ifdef PLATFORM_WINDOWS
+#ifdef PLATFORM_WINDOWS		// NOTE: Windows is pedantic about these fields being zeroed out.
 	addressRetrievalHint.ai_next = nullptr;
 	addressRetrievalHint.ai_canonname = nullptr;
 	addressRetrievalHint.ai_addr = nullptr;
@@ -100,6 +106,10 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 	addressRetrievalHint.ai_protocol = 0;
 	addressRetrievalHint.ai_flags = 0;
 
+// NOTE: Interface names aren't practical to type in the terminal in Windows, so presumably not a lot of people would use this functionality
+// if we had it. That isn't the actual reason though, the actual reason is that this interface thing blocks the use of the localhost
+// hostname, which people would probably much rather use than typing in some longwinded interface name.
+// NOTE: This is different in Linux, since one can easily just type "lo" if one requires the loopback interface.
 #ifndef PLATFORM_WINDOWS
 	if (resolve_interfaces_instead_of_hostnames) {
 		struct ifaddrs* interfaceAddresses;
@@ -148,6 +158,7 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 
 	switch (getaddrinfo(node, nullptr, &addressRetrievalHint, &addressInfo)) {
 		case 0: break;
+		// NOTE: Interestingly, these error codes are the same in Linux and Windows, so no #ifdef's required.
 		case EAI_AGAIN: REPORT_ERROR_AND_EXIT("temporary DNS lookup failure, try again later", EXIT_FAILURE);
 		case EAI_FAIL: REPORT_ERROR_AND_EXIT("DNS lookup failed", EXIT_FAILURE);
 		case EAI_MEMORY: REPORT_ERROR_AND_EXIT("sockaddr construction failed, out of memory", EXIT_FAILURE);
@@ -275,7 +286,7 @@ void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourceP
 
 // NOTE: Windows doesn't support IP_BIND_ADDRESS_NO_PORT, so it either does what I want it to without me having to tell it,
 // or it binds the ephemeral port at the bind call, which isn't what I want but it's not bad, so I can live with that.
-// (I'm leaning towards the former.)
+// (I'm leaning towards the latter)
 // NOTE: Now that I think about it, having IP_BIND_ADDRESS_NO_PORT on Linux has no utility that I can see.
 // It totally isn't harming us though and I have a feeling it's important for some edge-case so I'm going to leave it in.
 #ifndef PLATFORM_WINDOWS
@@ -300,6 +311,8 @@ void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourceP
 		case WSAEADDRINUSE:
 #endif
 			if (sourcePort == 0) {
+				// NOTE: This error shouldn't technically happen on Linux because of the above setsockopt, but I'm gonna
+				// leave this in just in case. I have to leave it in for Windows anyway since it can happen there.
 				REPORT_ERROR_AND_EXIT("bind communicator failed, no ephemeral source ports available", EXIT_FAILURE);
 			}
 			REPORT_ERROR_AND_EXIT("bind communicator failed, source port occupied", EXIT_FAILURE);
@@ -337,6 +350,15 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 #ifndef PLATFORM_WINDOWS
 		case EADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, no ephemeral ports available", EXIT_FAILURE);
 #else
+		// NOTE: Strangely, the following does not exist for Linux, even though it would be useful.
+		// TODO: How does Linux handle connections to wild-card addresses, does it allow them? That would be weird.
+		case WSAEADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, target IP address invalid", EXIT_FAILURE);
+
+		// NOTE: It doesn't seem like Windows delays the selection of ephemeral ports until the connect syscall like Linux can.
+		// It seems to select a port and bind to it at the bind call. The only exception to this is when using wild-card
+		// addresses (0.0.0.0 and co.). I don't know if it makes up it's mind on the bind call about which port to connect to or not,
+		// but I know that it does the actual binding at the connect syscall (even if the port is explicitly specified).
+		// If that port isn't available on at least one of the IP's is binds to, this error will get thrown AFAIK.
 		case WSAEADDRINUSE: REPORT_ERROR_AND_EXIT("failed to connect, source port occupied", EXIT_FAILURE);
 #endif
 
@@ -393,6 +415,8 @@ size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 		// You need to run this on actual hardware and see if other things like network disconnect also trigger ECONNRESET.
 		// Since a network change on the host doesn't actually affect the WSL instance, maybe Windows is sending ECONNRESET because of custom
 		// configuration.
+			// TODO: Definitely do some testing to determine which error codes you need to handle and how to handle them and such.
+			// TODO: And do that testing on some real linux hardware.
 #ifndef PLATFORM_WINDOWS
 		case ECONNRESET:
 #else
@@ -419,6 +443,7 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 			switch (GET_LAST_ERROR) {
 			// NOTE: ECONNRESET is for when remote resets before our send queue can be emptied.
 			// NOTE: ECONNRESET also gets triggered when the connected network changes.	TODO: Expand on this as above.
+			// NOTE: The above is what happens in WSL, but like I said, I'm not totally sure until I test.
 			// NOTE: EPIPE is for when remote resets and our send queue is empty (last sent packet doesn't receive an ACK but still counts as sent).
 #ifndef PLATFORM_WINDOWS
 			case ECONNRESET: case EPIPE:
@@ -443,7 +468,7 @@ size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
 
 void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint senderIPVersionConstraint) noexcept {
 	struct sockaddr_storage targetAddress = construct_sockaddr<CSA_RESOLVE_HOSTNAMES>(destinationAddress, destinationPort, senderIPVersionConstraint);
-	UDPSenderAddressFamily = targetAddress.ss_family;		// TODO: Handle the type of this addr family stuff.
+	UDPSenderAddressFamily = targetAddress.ss_family;
 
 	communicatorSocket = socket(UDPSenderAddressFamily, SOCK_DGRAM, 0);
 	if (communicatorSocket == INVALID_SOCKET) { REPORT_ERROR_AND_EXIT("failed to create UDP sender socket", EXIT_FAILURE); }
@@ -465,11 +490,20 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 		else { bindCommunicatorToSource(sourceAddress, sourcePort, senderIPVersionConstraint); }
 	}
 
-	// TODO: error handling here.
 	if (connect(communicatorSocket, (const sockaddr*)&targetAddress, sizeof(targetAddress)) == SOCKET_ERROR) {
 		switch (GET_LAST_ERROR) {
+#ifndef PLATFORM_WINDOWS
+		// NOTE: No need to make a Windows version for this one apparently, since Windows doesn't have an equivalent.
 		case EACCES: case EPERM: REPORT_ERROR_AND_EXIT("failed to connect, local system blocked attempt", EXIT_FAILURE);
+#endif
+
+#ifndef PLATFORM_WINDOWS
 		case EADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, no ephemeral ports available", EXIT_FAILURE);
+#else
+		case WSAEADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, target IP address invalid", EXIT_FAILURE);
+		case WSAEADDRINUSE: REPORT_ERROR_AND_EXIT("failed to connect, source port occupied", EXIT_FAILURE);
+#endif
+
 		// NOTE: These shouldn't happen for UDP.
 		//case ECONNREFUSED: REPORT_ERROR_AND_EXIT("failed to connect, connection refused", EXIT_FAILURE);
 		//case ENETUNREACH: REPORT_ERROR_AND_EXIT("failed to connect, network unreachable", EXIT_FAILURE);
@@ -498,7 +532,7 @@ void NetworkShepherd::writeUDP(const void* buffer, uint16_t buffer_size) noexcep
 uint16_t NetworkShepherd::getMSSApproximation() noexcept {
 	int MTU;
 	socklen_t MTU_buffer_size = sizeof(MTU);
-	if (getsockopt(communicatorSocket, IPPROTO_IP, IP_MTU, (const char*)&MTU, &MTU_buffer_size) == -1) {
+	if (getsockopt(communicatorSocket, IPPROTO_IP, IP_MTU, (char*)&MTU, &MTU_buffer_size) == -1) {
 		REPORT_ERROR_AND_EXIT("failed to get MTU from UDP sender socket with getsockopt", EXIT_FAILURE);
 	}
 	if (UDPSenderAddressFamily == AF_INET) { return MTU - 20 - 8; }

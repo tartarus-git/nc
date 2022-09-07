@@ -1,18 +1,14 @@
 #pragma once
 
+#include <cstdlib>
+
 #ifndef PLATFORM_WINDOWS
 #include <unistd.h>
 #else
 #include <io.h>
-#endif
-#include <cstdlib>
-
-#ifdef PLATFORM_WINDOWS
 
 #define STDERR_FILENO 2
-
-#define write(fd, buf, buflen) _write(fd, buf, buflen);
-
+#define write(...) _write(__VA_ARGS__);
 #endif
 
 template <size_t message_length>

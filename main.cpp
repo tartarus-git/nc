@@ -5,7 +5,7 @@
 
 #include "NetworkShepherd.h"	// for NetworkShepherd class, which serves as our interface with the network
 
-#include "error_reporting.h"
+#include "error_reporting.h"	// definitely not for error reporting *wink*
 
 #ifndef PLATFORM_WINDOWS
 #include <unistd.h>		// for Linux I/O
@@ -13,7 +13,7 @@
 #include <io.h>			// for Windows I/O
 
 #define STDIN_FILENO 0
-#define STDOUT_FILENO 1		// TODO: Make sure these are right.
+#define STDOUT_FILENO 1
 
 #define write(...) _write(__VA_ARGS__)
 #define read(...) _read(__VA_ARGS__)
