@@ -249,8 +249,6 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 	}
 }
 
-// TODO: Solve that UDP problem with the linux OS. For some reason, UDP packets don't cross my network, even with the normal traditional netcat
-
 void NetworkShepherd::listen(int backlogLength) noexcept {
 	// TODO: Figure out this backlog thing for both OS's now.
 	if (::listen(listenerSocket, backlogLength) == SOCKET_ERROR) {
@@ -433,7 +431,10 @@ size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 			REPORT_ERROR_AND_EXIT("failed to read from communicator socket, connection timed out", EXIT_FAILURE);
 #endif
 
-		default: REPORT_ERROR_AND_EXIT("failed to read from communicator socket, unknown reason", error, EXIT_FAILURE);
+		// NOT-SO-FUN-FACT: MSVC treats macro invocations with too many args as warnings instead of errors (they should be errors
+		// as per the standard). This is so fucking stupid, I feel like MSVC is bad for me.
+		// TODO: Switch out all your Windows compiler stuff to clang.
+		default: REPORT_ERROR_AND_CODE_AND_EXIT("failed to read from communicator socket, unknown reason", error, EXIT_FAILURE);
 		}
 	}
 
