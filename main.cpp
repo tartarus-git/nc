@@ -365,7 +365,9 @@ int main(int argc, const char* const * argv) noexcept {
 		}
 
 		NetworkShepherd::createListener(arguments::destinationIP, arguments::destinationPort, SOCK_STREAM, flags::IPVersionConstraint);
-		NetworkShepherd::listen(flags::backlog == -1 ? 0 : flags::backlog);
+		// TODO: I still don't understand the backlog parameter. It doesn't seem to do anything on any of the OS's I test it on.
+		// Can you please find some documentation that explains what the hell is going on? Or ask on stackoverflow.
+		NetworkShepherd::listen(flags::backlog == -1 ? 1 : flags::backlog);
 
 		if (flags::shouldKeepListening) {
 			while (true) { accept_and_handle_connection<NRST_LEAVE_STDOUT_OPEN>(); }

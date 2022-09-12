@@ -250,7 +250,6 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 }
 
 void NetworkShepherd::listen(int backlogLength) noexcept {
-	// TODO: Figure out this backlog thing for both OS's now.
 	if (::listen(listenerSocket, backlogLength) == SOCKET_ERROR) {
 		REPORT_ERROR_AND_EXIT("failed to listen with TCP listener socket", EXIT_FAILURE);
 	}
