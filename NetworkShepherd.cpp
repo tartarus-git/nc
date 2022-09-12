@@ -40,9 +40,6 @@ using socket_t = SOCKET;
 using socklen_t = int;
 using sockaddr_storage_family_t = short;
 
-// TODO: Also, explore all the possible error codes for send and recv and all those calls, use the windows manpages
-// for inspiration. Maybe you should do a couple real-world "stress-tests" to see which errors you actually need to handle specifically.
-
 #define GET_LAST_ERROR WSAGetLastError()
 
 #endif
@@ -230,7 +227,8 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 	}
 
 	if (bind(listenerSocket, (const sockaddr*)&listenerAddress, sizeof(listenerAddress)) == SOCKET_ERROR) {
-		switch (GET_LAST_ERROR) {
+		int error = GET_LAST_ERROR;
+		switch (error) {
 #ifndef PLATFORM_WINDOWS
 		case EACCES:
 #else
@@ -246,7 +244,7 @@ void NetworkShepherd::createListener(const char* address, uint16_t port, int soc
 			if (port == 0) { REPORT_ERROR_AND_EXIT("bind TCP listener failed, no ephemeral ports available", EXIT_FAILURE); }
 			REPORT_ERROR_AND_EXIT("bind TCP listener failed, port occupied", EXIT_FAILURE);
 
-		default: REPORT_ERROR_AND_EXIT("bind TCP listener failed, unknown reason", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_CODE_AND_EXIT("bind TCP listener failed, unknown reason", error, EXIT_FAILURE);
 		}
 	}
 }
@@ -263,14 +261,16 @@ void NetworkShepherd::listen(int backlogLength) noexcept {
 void NetworkShepherd::accept() noexcept {
 	communicatorSocket = ::accept(listenerSocket, nullptr, nullptr);
 	if (communicatorSocket == INVALID_SOCKET) {
+		int error = GET_LAST_ERROR;
 #ifndef PLATFORM_WINDOWS
-		if (GET_LAST_ERROR == ECONNABORTED) {
+		if (error == ECONNABORTED) {
 #else
-		if (GET_LAST_ERROR == WSAECONNRESET) {
+		if (error == WSAECONNRESET) {
 #endif
 			REPORT_ERROR_AND_EXIT("TCP listener accept connection failed, connection aborted", EXIT_FAILURE);
 		}
-		REPORT_ERROR_AND_EXIT("TCP listener accept connection failed, unknown reason", EXIT_FAILURE);
+
+		REPORT_ERROR_AND_CODE_AND_EXIT("TCP listener accept connection failed, unknown reason", error, EXIT_FAILURE);
 	}
 }
 
@@ -294,7 +294,8 @@ void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourceP
 #endif
 
 	if (bind(NetworkShepherd::communicatorSocket, (const sockaddr*)&sourceAddress, sizeof(sourceAddress)) == -1) {
-		switch (GET_LAST_ERROR) {
+		int error = GET_LAST_ERROR;
+		switch (error) {
 #ifndef PLATFORM_WINDOWS
 		case EACCES:
 #else
@@ -314,7 +315,7 @@ void bindCommunicatorToSource(const char* sourceAddress_string, uint16_t sourceP
 			}
 			REPORT_ERROR_AND_EXIT("bind communicator failed, source port occupied", EXIT_FAILURE);
 
-		default: REPORT_ERROR_AND_EXIT("bind communicator failed, unknown reason", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_CODE_AND_EXIT("bind communicator failed, unknown reason", error, EXIT_FAILURE);
 		}
 	}
 }
@@ -336,7 +337,8 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 	}
 
 	if (connect(communicatorSocket, (const sockaddr*)&connectionTargetAddress, sizeof(connectionTargetAddress)) == SOCKET_ERROR) {
-		switch (GET_LAST_ERROR) {
+		int error = GET_LAST_ERROR;
+		switch (error) {
 #ifndef PLATFORM_WINDOWS
 		case EACCES: case EPERM:
 #else
@@ -348,7 +350,8 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 		case EADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, no ephemeral ports available", EXIT_FAILURE);
 #else
 		// NOTE: Strangely, the following does not exist for Linux, even though it would be useful.
-		// TODO: How does Linux handle connections to wild-card addresses, does it allow them? That would be weird.
+		// NOTE: Turns out, you can connect to a wild-card address on Linux, it just connects to any listening address on the
+		// local machine AFAIK. How it decides which listening address to connect to is beyond me.
 		case WSAEADDRNOTAVAIL: REPORT_ERROR_AND_EXIT("failed to connect, target IP address invalid", EXIT_FAILURE);
 
 		// NOTE: It doesn't seem like Windows delays the selection of ephemeral ports until the connect syscall like Linux can.
@@ -394,7 +397,7 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 #endif
 			REPORT_ERROR_AND_EXIT("failed to connect, connection attempt timed out", EXIT_FAILURE);
 
-		default: REPORT_ERROR_AND_EXIT("failed to connect, unknown reason", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_CODE_AND_EXIT("failed to connect, unknown reason", error, EXIT_FAILURE);
 		}
 	}
 }
@@ -405,25 +408,35 @@ size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 #else
 	ssize_t bytesRead = recv(communicatorSocket, (char*)buffer, buffer_size, 0);
 #endif
+
 	if (bytesRead == SOCKET_ERROR) {
-		switch (GET_LAST_ERROR) {
-		// NOTE: ECONNRESET also happens when the connected network changes.
-		// TODO: Actually, that might not be true, in the context of WSL, some things are kind of weird.
-		// You need to run this on actual hardware and see if other things like network disconnect also trigger ECONNRESET.
-		// Since a network change on the host doesn't actually affect the WSL instance, maybe Windows is sending ECONNRESET because of custom
-		// configuration.
-			// TODO: Definitely do some testing to determine which error codes you need to handle and how to handle them and such.
-			// TODO: And do that testing on some real linux hardware.
+		int error = GET_LAST_ERROR;
+		switch (error) {
+			// NOTE: Super interesting: It seems if you disconnect the WiFi (probs works for Ethernet as well) and then connect it
+			// again without waiting too long, the OS keeps your connections alive, which is super cool.
+			// It's only when you CHANGE the WiFi connection or the connection times out that you get either ECONNRESET/ABORTED
+			// or ETIMEDOUT. I assume that you'll get the ECONNRESET/ABORTED thing even with the same WiFi if your IP address
+			// happens to change when coming back to the network.
+
 #ifndef PLATFORM_WINDOWS
 		case ECONNRESET:
 #else
 		case WSAECONNRESET:
+		case WSAECONNABORTED:	// NOTE: When local system terminates connection (e.g. network change). Linux uses ECONNRESET for this AFAIK.
 #endif
-			REPORT_ERROR_AND_EXIT("failed to read from communicator socket, remote reset connection", EXIT_FAILURE);
+			REPORT_ERROR_AND_EXIT("failed to read from communicator socket, connection reset", EXIT_FAILURE);
 
-		default: REPORT_ERROR_AND_EXIT("failed to read from communicator socket, unknown reason", EXIT_FAILURE);
+#ifndef PLATFORM_WINDOWS
+		case ETIMEDOUT:
+#else
+		case WSAETIMEDOUT:
+			REPORT_ERROR_AND_EXIT("failed to read from communicator socket, connection timed out", EXIT_FAILURE);
+#endif
+
+		default: REPORT_ERROR_AND_EXIT("failed to read from communicator socket, unknown reason", error, EXIT_FAILURE);
 		}
 	}
+
 	return bytesRead;
 }
 
@@ -436,22 +449,34 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 		ssize_t bytesWritten = send(communicatorSocket, (const char*)buffer, buffer_size, 0);
 #endif
 		if (bytesWritten == buffer_size) { return; }
+
 		if (bytesWritten == SOCKET_ERROR) {
-			switch (GET_LAST_ERROR) {
+			int error = GET_LAST_ERROR;
+			switch (error) {
 			// NOTE: ECONNRESET is for when remote resets before our send queue can be emptied.
-			// NOTE: ECONNRESET also gets triggered when the connected network changes.	TODO: Expand on this as above.
-			// NOTE: The above is what happens in WSL, but like I said, I'm not totally sure until I test.
+			// NOTE: ECONNRESET also gets triggered when the connected network changes (see read function above).
 			// NOTE: EPIPE is for when remote resets and our send queue is empty (last sent packet doesn't receive an ACK but still counts as sent).
+
 #ifndef PLATFORM_WINDOWS
-			case ECONNRESET: case EPIPE:
+			case ECONNRESET:
+			case EPIPE:
 #else
 			case WSAECONNRESET:
+			case WSAECONNABORTED:
 #endif
-				REPORT_ERROR_AND_EXIT("failed to send on communicator socket, remote reset connection", EXIT_FAILURE);
+				REPORT_ERROR_AND_EXIT("failed to send on communicator socket, connection reset", EXIT_FAILURE);
 
-			default: REPORT_ERROR_AND_EXIT("failed to send on communicator socket, unknown reason", EXIT_FAILURE);
+#ifndef PLATFORM_WINDOWS
+			case ETIMEDOUT:
+#else
+			case WSAETIMEDOUT:
+				REPORT_ERROR_AND_EXIT("failed to send on communicator socket, connection timed out", EXIT_FAILURE);
+#endif
+
+			default: REPORT_ERROR_AND_CODE_AND_EXIT("failed to send on communicator socket, unknown reason", error, EXIT_FAILURE);
 			}
 		}
+
 		*(const char**)&buffer += bytesWritten;
 		buffer_size -= bytesWritten;
 	}
@@ -488,7 +513,8 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 	}
 
 	if (connect(communicatorSocket, (const sockaddr*)&targetAddress, sizeof(targetAddress)) == SOCKET_ERROR) {
-		switch (GET_LAST_ERROR) {
+		int error = GET_LAST_ERROR;
+		switch (error) {
 #ifndef PLATFORM_WINDOWS
 		// NOTE: No need to make a Windows version for this one apparently, since Windows doesn't have an equivalent.
 		case EACCES: case EPERM: REPORT_ERROR_AND_EXIT("failed to connect, local system blocked attempt", EXIT_FAILURE);
@@ -507,7 +533,7 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 		//case ENETDOWN: REPORT_ERROR_AND_EXIT("failed to connect, network down", EXIT_FAILURE);
 		//case EHOSTUNREACH: REPORT_ERROR_AND_EXIT("failed to connect, host unreachable", EXIT_FAILURE);
 		//case ETIMEDOUT: REPORT_ERROR_AND_EXIT("failed to connect, connection attempt timed out", EXIT_FAILURE);
-		default: REPORT_ERROR_AND_EXIT("failed to connect, unknown reason", EXIT_FAILURE);
+		default: REPORT_ERROR_AND_CODE_AND_EXIT("failed to connect, unknown reason", error, EXIT_FAILURE);
 		}
 	}
 }
@@ -587,7 +613,8 @@ uint16_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, uint16_t buffer
 #endif
 		if (bytesSent == buffer_chunk_size) { return result; }
 		if (bytesSent == SOCKET_ERROR) {
-			switch (errno) {
+			int error = GET_LAST_ERROR;
+			switch (error) {
 #ifndef PLATFORM_WINDOWS
 			case EMSGSIZE:
 #else
@@ -597,7 +624,7 @@ uint16_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, uint16_t buffer
 				result = buffer_chunk_size;
 				continue;
 
-			default: REPORT_ERROR_AND_EXIT("failed to write to UDP sender socket", EXIT_FAILURE);
+			default: REPORT_ERROR_AND_CODE_AND_EXIT("failed to write to UDP sender socket", error, EXIT_FAILURE);
 			}
 		}
 		*(const char**)&buffer += bytesSent;
