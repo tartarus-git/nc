@@ -1,19 +1,16 @@
 #include "NetworkShepherd.h"
 
-#include <cstdint>
-#include <cstring>
+#include <cstdint>		// for fixed-width stuff
+#include <cstring>		// for std::strcmp
 
 #ifndef PLATFORM_WINDOWS
 
 #include <cerrno>
-#include <unistd.h>
+#include <unistd.h>		// for Linux I/O
 
 #else
 
-#include <io.h>
-
-#define STDIN_FILENO 0
-#define STDOUT_FILENO 1
+// NOTE: Don't need Windows I/O since you can't write and read to sockets anyway.
 
 using ssize_t = int;
 
@@ -21,10 +18,10 @@ using ssize_t = int;
 
 #ifndef PLATFORM_WINDOWS
 
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <ifaddrs.h>
-#include <netdb.h>
+#include <sys/socket.h>		// for Linux sockets
+#include <sys/types.h>		// for Linux system types
+#include <ifaddrs.h>		// for getifaddrs function and supporting struct
+#include <netdb.h>		// for getaddrinfo (I think), because that does DNS requests (hence a sort of "network database")
 
 using socket_t = int;
 using sockaddr_storage_family_t = sa_family_t;
@@ -36,8 +33,8 @@ using sockaddr_storage_family_t = sa_family_t;
 
 #else
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <winsock2.h>		// for Windows sockets
+#include <ws2tcpip.h>		// for extentions to Windows sockets relating to TCP/IP
 
 using socket_t = SOCKET;
 using socklen_t = int;
@@ -50,11 +47,11 @@ using sockaddr_storage_family_t = short;
 
 #endif
 
-#ifdef PLATFORM_WINDOWS
-#pragma comment(lib, "Ws2_32.lib")
-#endif
-
 #include "error_reporting.h"
+
+#ifdef PLATFORM_WINDOWS
+#pragma comment(lib, "Ws2_32.lib")	// statically link with winsock2 lib, because Windows is annoying
+#endif
 
 #ifdef PLATFORM_WINDOWS
 WSADATA NetworkShepherd::WSAData;
@@ -156,8 +153,8 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 	switch (getaddrinfo(node, nullptr, &addressRetrievalHint, &addressInfo)) {
 		case 0: break;
 		// NOTE: Interestingly, these error codes are the same in Linux and Windows, so no #ifdef's required.
-		case EAI_AGAIN: REPORT_ERROR_AND_EXIT("temporary DNS lookup failure, try again later", EXIT_FAILURE);
-		case EAI_FAIL: REPORT_ERROR_AND_EXIT("DNS lookup failed", EXIT_FAILURE);
+		case EAI_AGAIN: REPORT_ERROR_AND_EXIT("sockaddr construction failed, temporary DNS lookup failure, try again later", EXIT_FAILURE);
+		case EAI_FAIL: REPORT_ERROR_AND_EXIT("sockaddr construction failed, DNS lookup failed", EXIT_FAILURE);
 		case EAI_MEMORY: REPORT_ERROR_AND_EXIT("sockaddr construction failed, out of memory", EXIT_FAILURE);
 
 #ifndef PLATFORM_WINDOWS
@@ -165,13 +162,13 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 #else
 		case WSANO_DATA:
 #endif
-			REPORT_ERROR_AND_EXIT("hostname does not possess any valid addresses", EXIT_FAILURE);
+			REPORT_ERROR_AND_EXIT("sockaddr construction failed, hostname does not possess any valid addresses", EXIT_FAILURE);
 
 		case EAI_NONAME:
 #ifndef PLATFORM_WINDOWS
-			REPORT_ERROR_AND_EXIT("invalid address/hostname/interface", EXIT_FAILURE);
+			REPORT_ERROR_AND_EXIT("sockaddr construction failed, invalid address/hostname/interface", EXIT_FAILURE);
 #else
-			REPORT_ERROR_AND_EXIT("invalid address/hostname", EXIT_FAILURE);
+			REPORT_ERROR_AND_EXIT("sockaddr construction failed, invalid address/hostname", EXIT_FAILURE);
 #endif
 
 #ifndef PLATFORM_WINDOWS
@@ -201,7 +198,8 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 
 		return result_sockaddr;
 	}
-	REPORT_ERROR_AND_EXIT("hostname does not possess any IP addresses", EXIT_SUCCESS);
+	// NOTE: The following code should only be able to be reached in the Linux version of the program, since it captures non-IP addresses as well.
+	REPORT_ERROR_AND_EXIT("sockaddr construction failed, hostname does not possess any IP addresses", EXIT_FAILURE);
 }
 
 void NetworkShepherd::createListener(const char* address, uint16_t port, int socketType, IPVersionConstraint listenerIPVersionConstraint) noexcept {

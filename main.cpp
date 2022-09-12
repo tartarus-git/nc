@@ -279,8 +279,6 @@ void do_UDP_receive() noexcept {
 }
 
 void do_UDP_send_and_close() noexcept {
-	// NOTE: I'm not totally sure if these MTU setsockopt things work for IPv6 as well, since the documentation was unclear.
-	// NOTE: If you end up getting problems with IPv6 MTU stuff, I'll just have to implement a distinct IPv6 version of the MTU stuff, not hard.
 	NetworkShepherd::enableFindMSS();
 
 	uint16_t buffer_size = NetworkShepherd::getMSSApproximation();

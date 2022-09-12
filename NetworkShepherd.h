@@ -1,17 +1,21 @@
 #pragma once
 
-#include <cstdint>
+#include <cstdint>		// for fixed-width stuff
 
 #ifndef PLATFORM_WINDOWS
-#include <sys/socket.h>
+
+#include <sys/socket.h>		// Linux sockets
 
 using socket_t = int;
 using sockaddr_storage_family_t = sa_family_t;
+
 #else
-#include <winsock2.h>
+
+#include <winsock2.h>		// Windows sockets
 
 using socket_t = SOCKET;
 using sockaddr_storage_family_t = short;
+
 #endif
 
 // NOTE: I guess you could get rid of this and use AF_UNSPEC, AF_INET and AF_INET6 throughout the code.
