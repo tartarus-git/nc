@@ -8,11 +8,13 @@
 #include <cerrno>
 #include <unistd.h>		// for Linux I/O
 
+using sioret_t = ssize_t;
+
 #else
 
 // NOTE: Don't need Windows I/O since you can't write and read to sockets anyway.
 
-using ssize_t = int;
+using sioret_t = int;
 
 #endif
 
@@ -401,9 +403,9 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 
 size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 #ifndef PLATFORM_WINDOWS
-	ssize_t bytesRead = ::read(communicatorSocket, buffer, buffer_size);
+	sioret_t bytesRead = ::read(communicatorSocket, buffer, buffer_size);
 #else
-	ssize_t bytesRead = recv(communicatorSocket, (char*)buffer, buffer_size, 0);
+	sioret_t bytesRead = recv(communicatorSocket, (char*)buffer, buffer_size, 0);
 #endif
 
 	if (bytesRead == SOCKET_ERROR) {
@@ -444,9 +446,9 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 	while (true) {
 #ifndef PLATFORM_WINDOWS
 		// NOTE: MSG_NOSIGNAL means don't send SIGPIPE to our process when EPIPE situations are encountered, just return EPIPE without sending signal (usually does both).
-		ssize_t bytesWritten = send(communicatorSocket, buffer, buffer_size, MSG_NOSIGNAL);
+		sioret_t bytesWritten = send(communicatorSocket, buffer, buffer_size, MSG_NOSIGNAL);
 #else
-		ssize_t bytesWritten = send(communicatorSocket, (const char*)buffer, buffer_size, 0);
+		sioret_t bytesWritten = send(communicatorSocket, (const char*)buffer, buffer_size, 0);
 #endif
 		if (bytesWritten == buffer_size) { return; }
 
@@ -483,7 +485,7 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 }
 
 size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
-	ssize_t bytesRead = recv(listenerSocket, (char*)buffer, buffer_size, 0);		// NOTE: We use recv instead of read because read doesn't consume zero-length UDP packets and our program would hence get stuck if we used read.
+	sioret_t bytesRead = recv(listenerSocket, (char*)buffer, buffer_size, 0);		// NOTE: We use recv instead of read because read doesn't consume zero-length UDP packets and our program would hence get stuck if we used read.
 	if (bytesRead == SOCKET_ERROR) { REPORT_ERROR_AND_EXIT("failed to recv from UDP listener socket, unknown reason", EXIT_FAILURE); }
 	return bytesRead;
 }
@@ -541,9 +543,9 @@ void NetworkShepherd::createUDPSender(const char* destinationAddress, uint16_t d
 void NetworkShepherd::writeUDP(const void* buffer, uint16_t buffer_size) noexcept {
 	while (true) {
 #ifndef PLATFORM_WINDOWS
-		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_size);
+		sioret_t bytesSent = ::write(communicatorSocket, buffer, buffer_size);
 #else
-		ssize_t bytesSent = send(communicatorSocket, (char*)buffer, buffer_size, 0);
+		sioret_t bytesSent = send(communicatorSocket, (char*)buffer, buffer_size, 0);
 #endif
 		if (bytesSent == buffer_size) { return; }
 		if (bytesSent == SOCKET_ERROR) { REPORT_ERROR_AND_EXIT("failed to write to UDP sender socket", EXIT_FAILURE); }
@@ -607,9 +609,9 @@ uint16_t NetworkShepherd::writeUDPAndFindMSS(const void* buffer, uint16_t buffer
 	uint16_t result = 0;
 	while (true) {
 #ifndef PLATFORM_WINDOWS
-		ssize_t bytesSent = ::write(communicatorSocket, buffer, buffer_chunk_size);
+		sioret_t bytesSent = ::write(communicatorSocket, buffer, buffer_chunk_size);
 #else
-		ssize_t bytesSent = send(communicatorSocket, (char*)buffer, buffer_chunk_size, 0);
+		sioret_t bytesSent = send(communicatorSocket, (char*)buffer, buffer_chunk_size, 0);
 #endif
 		if (bytesSent == buffer_chunk_size) { return result; }
 		if (bytesSent == SOCKET_ERROR) {

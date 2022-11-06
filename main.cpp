@@ -1,4 +1,4 @@
-#include <cstdlib>		// for EXIT_SUCCESS and EXIT_FAILURE, as well as every syscall we use
+#include <cstdlib>		// for EXIT_SUCCESS and EXIT_FAILURE, as well as most other syscalls
 #include <cstdint>		// for fixed-width integer types
 #include <cstring>		// for std::strcmp
 #include <thread>		// for multi-threading
@@ -11,6 +11,8 @@
 
 #include <unistd.h>		// for Linux I/O
 
+using sioret_t = ssize_t;
+
 #define crossplatform_read(...) read(__VA_ARGS__)
 #define crossplatform_write(...) write(__VA_ARGS__)
 
@@ -21,7 +23,7 @@
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
 
-using ssize_t = int;
+using sioret_t = int;
 
 #define crossplatform_read(...) _read(__VA_ARGS__)
 #define crossplatform_write(...) _write(__VA_ARGS__)
@@ -269,7 +271,7 @@ void do_UDP_receive() noexcept {
 		if (bytesRead == 0) { continue; }
 		char* buffer_ptr = buffer;
 		while (true) {
-			ssize_t bytesWritten = crossplatform_write(STDOUT_FILENO, buffer_ptr, bytesRead);
+			sioret_t bytesWritten = crossplatform_write(STDOUT_FILENO, buffer_ptr, bytesRead);
 			if (bytesWritten == bytesRead) { break; }
 			if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
 			buffer_ptr += bytesWritten;
@@ -286,7 +288,7 @@ void do_UDP_send_and_close() noexcept {
 	if (!buffer) { REPORT_ERROR_AND_EXIT("failed to allocate buffer", EXIT_FAILURE); }
 
 	while (true) {
-		ssize_t bytesRead = crossplatform_read(STDIN_FILENO, buffer, buffer_size);
+		sioret_t bytesRead = crossplatform_read(STDIN_FILENO, buffer, buffer_size);
 		if (bytesRead == 0) { break; }
 		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
 
@@ -311,7 +313,7 @@ template <bool close_stdout_on_finish>
 void network_read_sub_transfer() noexcept {
 	char buffer[BUFSIZ];
 	while (true) {
-		ssize_t bytesRead = NetworkShepherd::read(buffer, sizeof(buffer));
+		size_t bytesRead = NetworkShepherd::read(buffer, sizeof(buffer));
 		if (bytesRead == 0) {
 			if (close_stdout_on_finish) {
 				if (close(STDOUT_FILENO) == -1) { REPORT_ERROR_AND_EXIT("failed to close stdout fd", EXIT_FAILURE); }
@@ -320,7 +322,7 @@ void network_read_sub_transfer() noexcept {
 		}
 		char* buffer_ptr = buffer;
 		while (true) {
-			ssize_t bytesWritten = crossplatform_write(STDOUT_FILENO, buffer_ptr, bytesRead);
+			sioret_t bytesWritten = crossplatform_write(STDOUT_FILENO, buffer_ptr, bytesRead);
 			if (bytesWritten == bytesRead) { break; }
 			if (bytesWritten == -1) { REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE); }
 			buffer_ptr += bytesWritten;
@@ -335,7 +337,7 @@ void do_data_transfer_over_connection_and_close() noexcept {
 
 	char buffer[BUFSIZ];
 	while (true) {
-		ssize_t bytesRead = crossplatform_read(STDIN_FILENO, buffer, sizeof(buffer));
+		sioret_t bytesRead = crossplatform_read(STDIN_FILENO, buffer, sizeof(buffer));
 		if (bytesRead == 0) { NetworkShepherd::shutdownCommunicatorWrite(); break; }
 		if (bytesRead == -1) { REPORT_ERROR_AND_EXIT("failed to read from stdin", EXIT_FAILURE); }
 		NetworkShepherd::write(buffer, bytesRead);
