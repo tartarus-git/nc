@@ -1,34 +1,13 @@
-#include <cstdlib>		// for EXIT_SUCCESS and EXIT_FAILURE, as well as most other syscalls
+#include <cstdlib>		// for std::exit(), EXIT_SUCCESS and EXIT_FAILURE, as well as most other syscalls
 #include <cstdint>		// for fixed-width integer types
 #include <cstring>		// for std::strcmp
 #include <thread>		// for multi-threading
 
 #include "NetworkShepherd.h"	// for NetworkShepherd class, which serves as our interface with the network
 
+#include "crossplatform_io.h"
+
 #include "error_reporting.h"	// definitely not for error reporting *wink*
-
-#ifndef PLATFORM_WINDOWS
-
-#include <unistd.h>		// for Linux I/O
-
-using sioret_t = ssize_t;
-
-#define crossplatform_read(...) read(__VA_ARGS__)
-#define crossplatform_write(...) write(__VA_ARGS__)
-
-#else
-
-#include <io.h>			// for Windows I/O
-
-#define STDIN_FILENO 0
-#define STDOUT_FILENO 1
-
-using sioret_t = int;
-
-#define crossplatform_read(...) _read(__VA_ARGS__)
-#define crossplatform_write(...) _write(__VA_ARGS__)
-
-#endif
 
 /*
 NOTE: Exit code is EXIT_SUCCESS on successful execution and on error resulting from invalid args.
@@ -36,7 +15,7 @@ Exit code is EXIT_FAILURE on every other error.
 */
 
 // NOTE: I don't think there is a good way to #ifdef inside of multi-line strings in C/C++, which is why we opted to just change
-// the help text here.
+// the help text here (I'm referring to the IMPORTANT: thing).
 
 const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] <address> <port>\n" \
 			"       nc --help\n" \
@@ -216,7 +195,7 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 						if (crossplatform_write(STDOUT_FILENO, helpText, sizeof(helpText) - 1) == -1) {
 							REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE);
 						}
-						std::exit(EXIT_SUCCESS);
+						halt_program(EXIT_SUCCESS);
 					}
 					REPORT_ERROR_AND_EXIT("one or more invalid flags specified", EXIT_SUCCESS);
 				}
