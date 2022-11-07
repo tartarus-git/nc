@@ -2,6 +2,8 @@
 
 #include <cstdint>		// for fixed-width stuff
 
+#include "crossplatform_io.h"
+
 #ifndef PLATFORM_WINDOWS
 
 #include <sys/socket.h>		// Linux sockets
@@ -50,10 +52,10 @@ public:
 
 	static void createCommunicatorAndConnect(const char* destinationAddress, uint16_t destinationPort, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint connectionIPVersionConstraint) noexcept;
 
-	static size_t read(void* buffer, size_t buffer_size) noexcept;
-	static void write(const void* buffer, size_t buffer_size) noexcept;
+	static sioret_t read(void* buffer, iosize_t buffer_size) noexcept;
+	static void write(const void* buffer, iosize_t buffer_size) noexcept;
 
-	static size_t readUDP(void* buffer, size_t buffer_size) noexcept;
+	static sioret_t readUDP(void* buffer, iosize_t buffer_size) noexcept;
 
 	static void createUDPSender(const char* destinationAddress, uint16_t destinationPort, bool allowBroadcast, const char* sourceAddress, uint16_t sourcePort, IPVersionConstraint senderIPVersionConstraint) noexcept;
 
