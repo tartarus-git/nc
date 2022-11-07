@@ -2,62 +2,52 @@
 
 #include <cstdlib>
 
-#ifndef PLATFORM_WINDOWS
+#include "crossplatform_io.h"
 
-#include <unistd.h>
-
-#define crossplatform_write(...) write(__VA_ARGS__)
-
-#else
-
-#include <io.h>
-
-#define STDERR_FILENO 2
-
-#define crossplatform_write(...) _write(__VA_ARGS__)
-
-#endif
+#include "halt_program.h"
 
 #define MAX_DIGITS_IN_SIGNED_INT32 11
 
+#define static_strlen(string) (sizeof(string) - 1)
+#define crossplatform_write_entire_literal(fd, literal) crossplatform_write_entire_buffer(fd, literal, static_strlen(literal))
+
 template <size_t message_length>
 void writeErrorAndExit(const char (&message)[message_length], int exitCode) noexcept {
-	crossplatform_write(STDERR_FILENO, message, message_length - 1);
-	std::exit(exitCode);
+	crossplatform_write_entire_literal(STDERR_FILENO, message);
+	halt_program(exitCode);
 }
 
 #define REPORT_ERROR_AND_EXIT(message, exitCode) writeErrorAndExit("ERROR: " message "\n", exitCode)
 
-#define crossplatform_write_literal(fd, literal) crossplatform_write(fd, literal, sizeof(literal) - 1)
-
-template <size_t message_length>
+template <iosize_t message_length>
 void writeErrorAndCodeAndExit(const char (&message)[message_length], int errorCode, int exitCode) noexcept {
-	crossplatform_write(STDERR_FILENO, message, message_length - 1);
+	crossplatform_write_entire_literal(STDERR_FILENO, message);
 
-	if (errorCode == 0) {
-		crossplatform_write_literal(STDERR_FILENO, " (platform-dependant error code: 0)\n");
-		std::exit(exitCode);
-	}
-
-	unsigned char digits[MAX_DIGITS_IN_SIGNED_INT32];
-	unsigned char* digits_ptr = digits + MAX_DIGITS_IN_SIGNED_INT32;
+	char digits[MAX_DIGITS_IN_SIGNED_INT32];
+	char* digits_ptr = digits + MAX_DIGITS_IN_SIGNED_INT32;
 
 	bool errorCode_negative = errorCode < 0;
+	unsigned long long positive_errorCode = (long long)errorCode * (-1 * errorCode_negative);
+	// NOTE: Casting to bigger type first to avoid signed overflow when negating it, which could happen otherwise.
+	// NOTE: SIGNED OVERFLOW IS UNDEFINED BEHAVIOR, WE AVOID IT AT ALL COSTS!
 
-	while (errorCode != 0) {
-		int new_errorCode = errorCode / 10;
-		if (errorCode_negative) { errorCode = new_errorCode * 10 - errorCode; }
-		else { errorCode -= new_errorCode * 10; }
-		*(--digits_ptr) = errorCode + '0';
-		errorCode = new_errorCode;
+	// NOTE: Unroll one loop to make sure the case where errorCode is 0 is handled.
+	char digit = positive_errorCode % 10;
+	*(--digits_ptr) = digit + '0';
+	positive_errorCode /= 10;
+
+	while (positive_errorCode != 0) {
+		char digit = positive_errorCode % 10;
+		*(--digits_ptr) = digit + '0';
+		positive_errorCode /= 10;
 	}
+
 	if (errorCode_negative) { *(--digits_ptr) = '-'; }
 
-	crossplatform_write_literal(STDERR_FILENO, " (platform-dependant error code: ");
 	crossplatform_write(STDERR_FILENO, digits_ptr, digits + MAX_DIGITS_IN_SIGNED_INT32 - digits_ptr);
-	crossplatform_write_literal(STDERR_FILENO, ")\n");
+	crossplatform_write_entire_literal(STDERR_FILENO, ")\n");
 
-	std::exit(exitCode);
+	halt_program(exitCode);
 }
 
-#define REPORT_ERROR_AND_CODE_AND_EXIT(message, errorCode, exitCode) writeErrorAndCodeAndExit("ERROR: " message, errorCode, exitCode)
+#define REPORT_ERROR_AND_CODE_AND_EXIT(message, errorCode, exitCode) writeErrorAndCodeAndExit("ERROR: " message " (platform-dependant error code: ", errorCode, exitCode)
