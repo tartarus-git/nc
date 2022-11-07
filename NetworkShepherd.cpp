@@ -433,13 +433,16 @@ sioret_t NetworkShepherd::read(void* buffer, iosize_t buffer_size) noexcept {
 	return bytesRead;
 }
 
+// NOTE: It's a bit strange but this function always writes the whole buffer, it doesn't return prematurely. Works for this program.
 void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
+	const char* byte_buffer = (const char*)buffer;
+
 	while (true) {
 #ifndef PLATFORM_WINDOWS
 		// NOTE: MSG_NOSIGNAL means don't send SIGPIPE to our process when EPIPE situations are encountered, just return EPIPE without sending signal (usually does both).
-		sioret_t bytesWritten = send(communicatorSocket, buffer, buffer_size, MSG_NOSIGNAL);
+		sioret_t bytesWritten = send(communicatorSocket, byte_buffer, buffer_size, MSG_NOSIGNAL);
 #else
-		sioret_t bytesWritten = send(communicatorSocket, (const char*)buffer, buffer_size, 0);
+		sioret_t bytesWritten = send(communicatorSocket, byte_buffer, buffer_size, 0);
 #endif
 		if (bytesWritten == buffer_size) { return; }
 
@@ -480,7 +483,7 @@ void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 				that the second pointer can read the correct data when it is written through the first pointer.
 				(basically, it prevents a fair bit of optimizations)
 			- this whole similar thing was done to at least offer some room for optimizations:
-				- if the input pointers are not of similar types then the compiler can assume that their
+				- if the input pointers don't point to similar types then the compiler can assume that their
 					data areas do not overlap, since that's how it normally is in real life.
 			- god knows why the C++ people didn't just implement the restrict keyword like C did, would have been a great
 				solution to the function thing. TODO: ask about why restrict isn't here.
@@ -493,24 +496,32 @@ void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 				when you read from the same spot in memory. THIS IS SUPER DANGEROUS!
 
 		   Everywhere where I say similar, this is what I mean:
-		   	- AFAIK, if the pointed-to-type is similar between two pointers, the pointers are similar.
 			- if two types are the same, they are similar
+		   	- if the pointed-to-type is similar between two pointers, the pointers are similar.
 			- also, if the pointers are pointers to members, they have to be of the same class.
 			- theres another one thats not super important.
 			(also, top level cv-qualifiers are ignored)
 
-			--> so what that means is that cv-qualifiers are ignored in every level of the type that is a pointer level,
-				whereas the cv-qualifications of the core type are important and make a huge difference,
-				unless of course the type that is pointed to is not a pointer and the core type is the only layer,
-				then the cv-qualifications are ignored and are not important.
+			--> it's complexly expressed, but I think this essentially means:
+				- the types are similar if they are the same, barring any cv-inequalities on any level of the type.
 
 		    --> ALSO, in addition to being similar, type punning is also allowed in every case where the other type
 		    	is the signed/unsigned counter-part to the original type.
 			It is ALSO allowed when the alias pointer, as in the pointer type that your using to access the data that was already set
 			through another pointer, is a pointer to char or unsigned char.
-			// TODO: Go through this when you're not tired and make sure this is actually all true.
+			--> the char pointer thing is very important. It breaks the undefined behaviour just long enough for you to
+			gather insight into the representation of any type, which is necessary in the day-to-day.
+
+		------> ALL IN ALL: you should avoid type punning unless your alias type is a char or unsigned char (or I assume signed char)
+		------>			or the types are similar or the signed/unsigned thing from above.
+
+			// NOTE: MAKE SURE TO BE CAREFUL WITH TYPE PUNNING. One wrong move and you're undefined in an instant.
 		*/
-		*(const char**)&buffer += bytesWritten;
+
+		// NOTE: Undefined behaviour since alias type is const char* and not const char.
+		//*(const char**)&buffer += bytesWritten;
+
+		byte_buffer += bytesWritten;
 		buffer_size -= bytesWritten;
 	}
 }
