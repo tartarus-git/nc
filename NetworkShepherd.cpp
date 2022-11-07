@@ -3,20 +3,9 @@
 #include <cstdint>		// for fixed-width stuff
 #include <cstring>		// for std::strcmp
 
-#ifndef PLATFORM_WINDOWS
+#include "crossplatform_io.h"
 
-#include <cerrno>
-#include <unistd.h>		// for Linux I/O
-
-using sioret_t = ssize_t;
-
-#else
-
-// NOTE: Don't need Windows I/O since you can't write and read to sockets anyway.
-
-using sioret_t = int;
-
-#endif
+#include "error_retrieval.h"
 
 #ifndef PLATFORM_WINDOWS
 
@@ -31,7 +20,7 @@ using sockaddr_storage_family_t = sa_family_t;
 #define INVALID_SOCKET -1
 #define SOCKET_ERROR -1
 
-#define GET_LAST_ERROR errno
+#define GET_LAST_ERROR get_last_error()
 
 #else
 
@@ -53,7 +42,9 @@ using sockaddr_storage_family_t = short;
 #endif
 
 #ifdef PLATFORM_WINDOWS
+
 WSADATA NetworkShepherd::WSAData;
+
 #endif
 
 socket_t NetworkShepherd::listenerSocket;
@@ -401,7 +392,7 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 	}
 }
 
-size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
+sioret_t NetworkShepherd::read(void* buffer, iosize_t buffer_size) noexcept {
 #ifndef PLATFORM_WINDOWS
 	sioret_t bytesRead = ::read(communicatorSocket, buffer, buffer_size);
 #else
@@ -442,7 +433,7 @@ size_t NetworkShepherd::read(void* buffer, size_t buffer_size) noexcept {
 	return bytesRead;
 }
 
-void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
+void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 	while (true) {
 #ifndef PLATFORM_WINDOWS
 		// NOTE: MSG_NOSIGNAL means don't send SIGPIPE to our process when EPIPE situations are encountered, just return EPIPE without sending signal (usually does both).
@@ -479,12 +470,52 @@ void NetworkShepherd::write(const void* buffer, size_t buffer_size) noexcept {
 			}
 		}
 
+		/*
+		   It's time I wrote about this because it's important, I've been avoiding it because it's kind of complicated.
+		   It's often called type punning or type aliasing, basically it's accessing the same data through pointers of different types.
+		   One example of this is getting two pointers as inputs in a function:
+		   	- If the pointers point to similar (that word is very concretely defined in the standard) types,
+				it is assumed that the pointers can point to the same data/the arrays can overlap or something.
+			- that means that the compiler has to write to actual RAM for way more variable accesses, to make sure
+				that the second pointer can read the correct data when it is written through the first pointer.
+				(basically, it prevents a fair bit of optimizations)
+			- this whole similar thing was done to at least offer some room for optimizations:
+				- if the input pointers are not of similar types then the compiler can assume that their
+					data areas do not overlap, since that's how it normally is in real life.
+			- god knows why the C++ people didn't just implement the restrict keyword like C did, would have been a great
+				solution to the function thing. TODO: ask about why restrict isn't here.
+
+		   So you can see why type punning through reinterpret_cast or *(x*)&y is a problem:
+
+		   	- You're constructing a pointer of another type that refers to the same data as another pointer.
+			- That's super duper UB because the compiler assumes that these two pointers do not refer to the same data.
+			- As a result: your instructions could be optimized in such a way that you don't read the expected data
+				when you read from the same spot in memory. THIS IS SUPER DANGEROUS!
+
+		   Everywhere where I say similar, this is what I mean:
+		   	- AFAIK, if the pointed-to-type is similar between two pointers, the pointers are similar.
+			- if two types are the same, they are similar
+			- also, if the pointers are pointers to members, they have to be of the same class.
+			- theres another one thats not super important.
+			(also, top level cv-qualifiers are ignored)
+
+			--> so what that means is that cv-qualifiers are ignored in every level of the type that is a pointer level,
+				whereas the cv-qualifications of the core type are important and make a huge difference,
+				unless of course the type that is pointed to is not a pointer and the core type is the only layer,
+				then the cv-qualifications are ignored and are not important.
+
+		    --> ALSO, in addition to being similar, type punning is also allowed in every case where the other type
+		    	is the signed/unsigned counter-part to the original type.
+			It is ALSO allowed when the alias pointer, as in the pointer type that your using to access the data that was already set
+			through another pointer, is a pointer to char or unsigned char.
+			// TODO: Go through this when you're not tired and make sure this is actually all true.
+		*/
 		*(const char**)&buffer += bytesWritten;
 		buffer_size -= bytesWritten;
 	}
 }
 
-size_t NetworkShepherd::readUDP(void* buffer, size_t buffer_size) noexcept {
+sioret_t NetworkShepherd::readUDP(void* buffer, iosize_t buffer_size) noexcept {
 	sioret_t bytesRead = recv(listenerSocket, (char*)buffer, buffer_size, 0);		// NOTE: We use recv instead of read because read doesn't consume zero-length UDP packets and our program would hence get stuck if we used read.
 	if (bytesRead == SOCKET_ERROR) { REPORT_ERROR_AND_EXIT("failed to recv from UDP listener socket, unknown reason", EXIT_FAILURE); }
 	return bytesRead;
