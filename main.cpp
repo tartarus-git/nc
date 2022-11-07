@@ -9,6 +9,8 @@
 
 #include "error_reporting.h"	// definitely not for error reporting *wink*
 
+#include <limits>
+
 /*
 NOTE: Exit code is EXIT_SUCCESS on successful execution and on error resulting from invalid args.
 Exit code is EXIT_FAILURE on every other error.
@@ -63,29 +65,45 @@ namespace flags {
 	bool allowBroadcast = false;
 }
 
-uint16_t parsePort(const char* portString) noexcept {
-	if (portString[0] == '\0') { REPORT_ERROR_AND_EXIT("port input string cannot be empty", EXIT_SUCCESS); }
+uint16_t parsePort(const char* portString_raw) noexcept {
+	if (portString_raw[0] == '\0') { REPORT_ERROR_AND_EXIT("port input string cannot be empty", EXIT_SUCCESS); }
+
+	// NOTE: WE AVOID SIGNED OVERFLOW SINCE THAT'S UNDEFINED BEHAVIOR
+	const unsigned char* portString = (const unsigned char*)portString_raw;
+
 	uint32_t result = portString[0] - '0';
 	if (result > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
+
 	for (size_t i = 1; portString[i] != '\0'; i++) {
 		unsigned char digit = portString[i] - '0';
 		if (digit > 9) { REPORT_ERROR_AND_EXIT("port input string is invalid", EXIT_SUCCESS); }
+
 		result = result * 10 + digit;
-		if (result > 0b1111111111111111) { REPORT_ERROR_AND_EXIT("port input value too large", EXIT_SUCCESS); }
+		if (result > (uint16_t)-1) { REPORT_ERROR_AND_EXIT("port input value too large", EXIT_SUCCESS); }
 	}
+
 	return result;
 }
 
-int parseBacklog(const char* backlogString) noexcept {
-	if (backlogString[0] == '\0') { REPORT_ERROR_AND_EXIT("backlog input string cannot be empty", EXIT_SUCCESS); }
+int parseBacklog(const char* backlogString_raw) noexcept {
+	static_assert(sizeof(int) < sizeof(uint64_t), "the \"int\" type must be smaller than the \"uint64_t\" type for this program to work");
+
+	if (backlogString_raw[0] == '\0') { REPORT_ERROR_AND_EXIT("backlog input string cannot be empty", EXIT_SUCCESS); }
+
+	// NOTE: WE AVOID SIGNED OVERFLOW BECAUSE THAT'S UNDEFINED BEHAVIOR
+	const unsigned char* backlogString = (const unsigned char*)backlogString_raw;
+
 	uint64_t result = backlogString[0] - '0';
 	if (result > 9) { REPORT_ERROR_AND_EXIT("backlog input string is invalid", EXIT_SUCCESS); }
+
 	for (size_t i = 1; backlogString[i] != '\0'; i++) {
 		unsigned char digit = backlogString[i] - '0';
 		if (digit > 9) { REPORT_ERROR_AND_EXIT("backlog input string is invalid", EXIT_SUCCESS); }
+
 		result = result * 10 + digit;
-		if (result > 0b01111111111111111111111111111111) { REPORT_ERROR_AND_EXIT("backlog input value too large", EXIT_SUCCESS); }
+		if (result > std::numeric_limits<int>::max()) { REPORT_ERROR_AND_EXIT("backlog input value too large", EXIT_SUCCESS); }
 	}
+
 	return result;
 }
 
@@ -223,7 +241,7 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 // NOTE: One never returns from this function, since UDP sockets can only get closed properly by the local user.
 // NOTE: When the local user sends SIGINT, the program abruptly terminates and we rely on the OS to clean up the UDP socket.
 // NOTE: That's why we don't do it here.
-void do_UDP_receive() noexcept {
+[[noreturn]] void do_UDP_receive() noexcept {
 	char buffer[65527];	// NOTE: We use the theoretical maximum data size for UDP packets here, since readUDP reads
 				// packet-wise and discards whatever we don't catch in the buffer.
 				// There isn't anything we can do about this AFAIK, we just try our best to get all the data.
