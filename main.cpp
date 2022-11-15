@@ -213,7 +213,6 @@ void validateFlagRelationships() noexcept {
 		if (flags::allowBroadcast) { REPORT_ERROR_AND_EXIT("broadcast isn't allowed when listening", EXIT_SUCCESS); }
 
 		if (flags::shouldKeepListening) {
-			// TODO: Fix backlog system to default to 1 in the syscall?
 			if (flags::shouldUseUDP) { REPORT_ERROR_AND_EXIT("\"-k\" cannot be specified with \"-u\"", EXIT_SUCCESS); }
 		} else {
 			if (flags::backlog != -1) { REPORT_ERROR_AND_EXIT("\"--backlog\" cannot be specified without \"-k\"", EXIT_SUCCESS); }
@@ -422,8 +421,6 @@ int main(int argc, const char* const * argv) noexcept {
 		}
 
 		NetworkShepherd::createListener(arguments::destinationIP, arguments::destinationPort, SOCK_STREAM, flags::IPVersionConstraint);
-		// TODO: I still don't understand the backlog parameter. It doesn't seem to do anything on any of the OS's I test it on.
-		// Can you please find some documentation that explains what the hell is going on? Or ask on stackoverflow.
 		NetworkShepherd::listen(flags::backlog == -1 ? default_connection_backlog_length : flags::backlog);
 
 		if (flags::shouldKeepListening) {
