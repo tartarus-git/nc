@@ -1,4 +1,7 @@
-constexpr int default_connection_backlog_length = 1;
+// NOTE: backlog argument to listen() is just a hint, but technically (very technically) 0 should allow no pending connections.
+// AFAIK the backlog argument is completely ignored when syncookies are enabled, since syncookies make backlogs redundant AFAIK.
+// TODO: Research syncookies.
+constexpr int default_connection_backlog_length = 0;
 
 #include <cstdlib>		// for std::exit(), EXIT_SUCCESS and EXIT_FAILURE, as well as most other syscalls
 #include <cstdint>		// for fixed-width integer types
