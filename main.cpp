@@ -1,3 +1,5 @@
+constexpr int default_connection_backlog_length = 1;
+
 #include <cstdlib>		// for std::exit(), EXIT_SUCCESS and EXIT_FAILURE, as well as most other syscalls
 #include <cstdint>		// for fixed-width integer types
 #include <cstring>		// for std::strcmp
@@ -19,7 +21,7 @@ Exit code is EXIT_FAILURE on every other error.
 // NOTE: I don't think there is a good way to #ifdef inside of multi-line strings in C/C++, which is why we opted to just change
 // the help text here (I'm referring to the IMPORTANT: thing).
 
-const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] <address> <port>\n" \
+constexpr char helpText_half_0[] = "usage: nc [-46lkub] [--source <source> || --port <source-port>] <address> <port>\n" \
 			"       nc --help\n" \
 			"\n" \
 			"function: nc (netcat) sends and receives data over a network (no flags: initiate TCP connection to <address> on <port>)\n" \
@@ -35,13 +37,65 @@ const char helpText[] = "usage: nc [-46lkub] [--source <source> || --port <sourc
 				"\t[-b]                         --> (only valid with -u) allow broadcast addresses\n" \
 				"\t[--source <source>]          --> (only valid without -l) send from <source> (can be IP/interface)\n" \
 				"\t[--port <source-port>]       --> (only valid without -l and with --source*) send from <source-port>\n" \
-				"\t[--backlog <backlog-length>] --> (only valid with -k) set backlog length to <backlog-length>\n" /* TODO: Add default mention */ \
+				"\t[--backlog <backlog-length>] --> (only valid with -k) set backlog length to <backlog-length> (default: ";
+
+constexpr char helpText_half_1[] = ")\n" \
 				"\t<address>                    --> send to <address> or (with -l) listen on <address> (can be IP/hostname/interface)\n" \
 				"\t<port>                       --> send to <port> or (with -l) listen on <port>\n" \
 			"\n" \
 			"notes:\n" \
 				"\t* The exception to the rule is \"--port 0\". This is treated as a no-op and can also appear any amount of times\n" \
 				"\tas long as \"--port\" hasn't been specified to the left of it with a non-zero value.\n";
+
+template <size_t length>
+struct meta_string {
+	char data[length + 1];
+
+	constexpr char& operator[](size_t index) noexcept { return data[index]; }
+	constexpr const char& operator[](size_t index) const noexcept { return data[index]; }
+};
+
+template <int backlog_length_raw>
+consteval uint8_t measure_string_conversion() {
+	int backlog_length = backlog_length_raw;
+	static_assert(backlog_length_raw >= 0, "measure_string_conversion() does not accept negative values for \"backlog_length\"");
+	uint8_t result = 0;
+	while (true) {
+		result++;
+		if ((backlog_length /= 10) == 0) { return result; }
+	}
+}
+
+template <int backlog_length_raw>
+consteval void convert_int_to_string(char* buffer_end) {
+	int backlog_length = backlog_length_raw;
+	static_assert(backlog_length_raw >= 0, "convert_int_to_string() does not accept negative values for \"backlog_length\"");
+	while (true) {
+		// NOTE: DON'T WORRY, NO SIGNED OVERFLOW HERE
+		*(--buffer_end) = backlog_length % 10 + '0';
+		if ((backlog_length /= 10) == 0) { return; }
+	}
+}
+
+#define meta_strlen(string) (sizeof(string) - 1)
+
+consteval auto construct_help_text() {
+	constexpr uint8_t injection_length = measure_string_conversion<default_connection_backlog_length>();
+
+	meta_string<meta_strlen(helpText_half_0) + injection_length + meta_strlen(helpText_half_1)> result;
+
+	for (size_t i = 0; i < meta_strlen(helpText_half_0); i++) { result[i] = helpText_half_0[i]; }
+
+	convert_int_to_string<default_connection_backlog_length>(result.data + meta_strlen(helpText_half_0) + injection_length);
+
+	for (size_t i = meta_strlen(helpText_half_0) + injection_length; i < meta_strlen(result); i++) {
+		result[i] = helpText_half_1[i - (meta_strlen(helpText_half_0) + injection_length)];
+	}
+
+	result[sizeof(result) - 1] = '\0';
+
+	return result;
+}
 
 // COMMAND-LINE PARSER START ---------------------------------------------------
 
@@ -210,7 +264,8 @@ void manageArgs(int argc, const char* const * argv) noexcept {
 					}
 					if (std::strcmp(flagContent, "help") == 0) {
 						if (argc != 2) { REPORT_ERROR_AND_EXIT("use of \"--help\" flag with other args is illegal", EXIT_SUCCESS); }
-						if (crossplatform_write(STDOUT_FILENO, helpText, sizeof(helpText) - 1) == -1) {
+						static constexpr auto helpText = construct_help_text();
+						if (crossplatform_write(STDOUT_FILENO, helpText.data, meta_strlen(helpText)) == -1) {
 							REPORT_ERROR_AND_EXIT("failed to write to stdout", EXIT_FAILURE);
 						}
 						halt_program(EXIT_SUCCESS);
@@ -366,7 +421,7 @@ int main(int argc, const char* const * argv) noexcept {
 		NetworkShepherd::createListener(arguments::destinationIP, arguments::destinationPort, SOCK_STREAM, flags::IPVersionConstraint);
 		// TODO: I still don't understand the backlog parameter. It doesn't seem to do anything on any of the OS's I test it on.
 		// Can you please find some documentation that explains what the hell is going on? Or ask on stackoverflow.
-		NetworkShepherd::listen(flags::backlog == -1 ? 1 : flags::backlog);
+		NetworkShepherd::listen(flags::backlog == -1 ? default_connection_backlog_length : flags::backlog);
 
 		if (flags::shouldKeepListening) {
 			while (true) { accept_and_handle_connection<NRST_LEAVE_STDOUT_OPEN>(); }
