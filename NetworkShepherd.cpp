@@ -486,7 +486,7 @@ void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 				- if the input pointers don't point to similar types then the compiler can assume that their
 					data areas do not overlap, since that's how it normally is in real life.
 			- god knows why the C++ people didn't just implement the restrict keyword like C did, would have been a great
-				solution to the function thing. TODO: ask about why restrict isn't here.
+				solution to the function thing. I've heard it's because it would be too difficult to implement with C++ templates and everything.
 
 		   So you can see why type punning through reinterpret_cast or *(x*)&y is a problem:
 
@@ -518,7 +518,11 @@ void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 			// NOTE: MAKE SURE TO BE CAREFUL WITH TYPE PUNNING. One wrong move and you're undefined in an instant.
 		*/
 
-		// NOTE: Undefined behaviour since alias type is const char* and not const char.
+		// NOTE: This is still defined behavior though AFAIK,
+		// because you can cast to whatever pointer you want,
+		// it's simply the use that can cause UB.
+		// Here, we're still accessing the buffer bytes
+		// through char alias, which is well defined.
 		//*(const char**)&buffer += bytesWritten;
 
 		byte_buffer += bytesWritten;
