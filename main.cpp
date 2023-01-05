@@ -349,6 +349,7 @@ void do_UDP_send_and_close() noexcept {
 		uint16_t newMSS = NetworkShepherd::writeUDPAndFindMSS(buffer, bytesRead);
 		if (newMSS == 0) { continue; }		// NOTE: newMSS == 0 means MSS stays the same.
 
+		// NOTE: Reallocation isn't strictly necessary since it should always shrink, but I'm trying to be respectful.
 		delete[] buffer;
 		buffer = new (std::nothrow) char[newMSS];
 		if (!buffer) { REPORT_ERROR_AND_EXIT("failed to reallocate buffer", EXIT_FAILURE); }
@@ -387,6 +388,9 @@ void network_read_sub_transfer() noexcept {
 
 template <bool close_stdout_on_finish>
 void do_data_transfer_over_connection_and_close() noexcept {
+	// NOTE: Cast is necessary because (for whatever reason) thread only accepts non-noexcept function ptr types.
+	// NOTE: Luckily, casting from noexcept to non-noexcept works great and is well-defined.
+	// BEWARE: Casting from non-noexcept to noexcept is UB (for obvious exception handling reasons).
 	std::thread networkReadThread((void (*)())network_read_sub_transfer<close_stdout_on_finish>);
 
 	char buffer[BUFSIZ];
