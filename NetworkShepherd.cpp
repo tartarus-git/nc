@@ -93,7 +93,7 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 // NOTE: Interface names aren't practical to type in the terminal in Windows, so presumably not a lot of people would use this functionality
 // if we had it. That isn't the actual reason though, the actual reason is that this interface thing blocks the use of the localhost
 // hostname, which people would probably much rather use than typing in some longwinded interface name.
-// NOTE: This is different in Linux, since one can easily just type "lo" if one requires the loopback interface.
+// NOTE: This is different on Linux, since one can easily just type "lo" if one requires the loopback interface.
 #ifndef PLATFORM_WINDOWS
 	if (resolve_interfaces_instead_of_hostnames) {
 		struct ifaddrs* interfaceAddresses;
