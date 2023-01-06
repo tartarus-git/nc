@@ -14,7 +14,7 @@ endif
 
 CLANG_PREAMBLE := clang++-11 -std=$(CPP_STD) -$(OPTIMIZATION_LEVEL) $(POSSIBLE_WALL) -fno-exceptions -pthread
 
-.PHONY: all unoptimized clean
+.PHONY: all unoptimized clean clean_include_swaps
 
 all: bin/$(BINARY_NAME)
 
@@ -34,5 +34,10 @@ bin/.dirstamp:
 	mkdir -p bin
 	touch bin/.dirstamp
 
+# The normal clean rule ignores swap files in case you have open vim instances. This is respectful to them.
+# Use the clean_include_swaps rule to clean every untracked file. You can do that if you don't have any vim instances open.
 clean:
+	git clean -fdx -e *.swp
+
+clean_include_swaps:
 	git clean -fdx
