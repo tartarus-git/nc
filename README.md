@@ -10,8 +10,8 @@ This program compiles for Windows as well as Linux, which is pretty cool.
 ## Prerequisites
 
 ```
-clang++-11 (for Linux)
-MSVC 19.29 (for Windows)
+clang++-11 or later (for Linux)
+MSVC 19.29 or later (for Windows)
 git (not just for cloning, the makefile also uses git to clean up the repo)
 make
 bash
