@@ -14,7 +14,7 @@ constexpr int default_connection_backlog_length = 0;
 
 #include "error_reporting.h"	// definitely not for error reporting *wink*
 
-#include <limits>
+#include <limits>		// numeric limits, like the biggest possible int for example
 
 /*
 NOTE: Exit code is EXIT_SUCCESS on successful execution and on error resulting from invalid args.
@@ -80,7 +80,7 @@ consteval void convert_int_to_string(char* buffer_end) {
 	}
 }
 
-#define meta_strlen(string) (sizeof(string) - 1)
+#define meta_strlen(string) (sizeof(string) / sizeof(char) - 1)
 
 consteval auto construct_help_text() {
 	constexpr uint8_t injection_length = measure_string_conversion<default_connection_backlog_length>();
@@ -95,7 +95,7 @@ consteval auto construct_help_text() {
 		result[i] = helpText_half_1[i - (meta_strlen(helpText_half_0) + injection_length)];
 	}
 
-	result[sizeof(result) - 1] = '\0';
+	result[meta_strlen(result)] = '\0';
 
 	return result;
 }
