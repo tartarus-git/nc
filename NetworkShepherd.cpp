@@ -433,7 +433,8 @@ sioret_t NetworkShepherd::read(void* buffer, iosize_t buffer_size) noexcept {
 	return bytesRead;
 }
 
-// NOTE: It's a bit strange but this function always writes the whole buffer, it doesn't return prematurely. Works for this program.
+// NOTE: It's a bit strange but this function always writes the whole buffer, it doesn't return prematurely. It's only weird because it's
+// different from the write syscall, but it works nicely for this program. There's no reason not to do it like this.
 void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 	const char* byte_buffer = (const char*)buffer;
 
