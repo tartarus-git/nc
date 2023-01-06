@@ -1,4 +1,4 @@
-MAIN_CPP_INCLUDES := NetworkShepherd.h crossplatform_io.h error_reporting.h
+MAIN_CPP_INCLUDES := NetworkShepherd.h crossplatform_io.h error_reporting.h halt_program.h
 NETWORK_SHEPHERD_INCLUDES := NetworkShepherd.h crossplatform_io.h error_reporting.h
 
 BINARY_NAME := nc

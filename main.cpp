@@ -14,6 +14,8 @@ constexpr int default_connection_backlog_length = 0;
 
 #include "error_reporting.h"	// definitely not for error reporting *wink*
 
+#include "halt_program.h"
+
 #include <limits>		// numeric limits, like the biggest possible int for example
 
 /*
