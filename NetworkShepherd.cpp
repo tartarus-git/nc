@@ -395,8 +395,6 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 // NOTE: This functions return value will never ever ever be less than
 // 0, because errors are handled inside the function and error
 // reporting and program termination is done there as well.
-
-// TODO: Look through additions in windows version again.
 sioret_t NetworkShepherd::read(void* buffer, iosize_t buffer_size) noexcept {
 #ifndef PLATFORM_WINDOWS
 	sioret_t bytesRead = ::read(communicatorSocket, buffer, buffer_size);
