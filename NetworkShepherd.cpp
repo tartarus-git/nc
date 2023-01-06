@@ -392,6 +392,11 @@ void NetworkShepherd::createCommunicatorAndConnect(const char* destinationAddres
 	}
 }
 
+// NOTE: This functions return value will never ever ever be less than
+// 0, because errors are handled inside the function and error
+// reporting and program termination is done there as well.
+
+// TODO: Look through additions in windows version again.
 sioret_t NetworkShepherd::read(void* buffer, iosize_t buffer_size) noexcept {
 #ifndef PLATFORM_WINDOWS
 	sioret_t bytesRead = ::read(communicatorSocket, buffer, buffer_size);
@@ -487,16 +492,16 @@ void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 				- if the input pointers don't point to similar types then the compiler can assume that their
 					data areas do not overlap, since that's how it normally is in real life.
 			- god knows why the C++ people didn't just implement the restrict keyword like C did, would have been a great
-				solution to the function thing. I've heard it's because it would be too difficult to implement with C++ templates and everything.
+				solution to the function thing. I've heard it's because it would be too difficult and weird to implement with C++ templates and the C++ type system, but the idea is good. TODO: Find out exactly why something similar to restrict hasn't been implemented.
 
 		   So you can see why type punning through reinterpret_cast or *(x*)&y is a problem:
 
 		   	- You're constructing a pointer of another type that refers to the same data as another pointer.
-			- That's super duper UB because the compiler assumes that these two pointers do not refer to the same data.
+			- Access through that pointer is super duper UB because the compiler assumes that these two pointers do not refer to the same data.
 			- As a result: your instructions could be optimized in such a way that you don't read the expected data
 				when you read from the same spot in memory. THIS IS SUPER DANGEROUS!
 
-		   Everywhere where I say similar, this is what I mean:
+		   Everywhere where I say similar, this is what I (and the standard) mean:
 			- if two types are the same, they are similar
 		   	- if the pointed-to-type is similar between two pointers, the pointers are similar.
 			- also, if the pointers are pointers to members, they have to be of the same class.
@@ -508,23 +513,29 @@ void NetworkShepherd::write(const void* buffer, iosize_t buffer_size) noexcept {
 
 		    --> ALSO, in addition to being similar, type punning is also allowed in every case where the other type
 		    	is the signed/unsigned counter-part to the original type.
-			It is ALSO allowed when the alias pointer, as in the pointer type that your using to access the data that was already set
-			through another pointer, is a pointer to char or unsigned char.
+			It is ALSO allowed when the alias pointer, as in the pointer type that you're using to access the data that was already set
+			through another pointer, is a pointer to char or unsigned char or signed char.
 			--> the char pointer thing is very important. It breaks the undefined behaviour just long enough for you to
 			gather insight into the representation of any type, which is necessary in the day-to-day.
 
-		------> ALL IN ALL: you should avoid type punning unless your alias type is a char or unsigned char (or I assume signed char)
+		------> ALL IN ALL: you should avoid type punning unless your alias type is a char or unsigned char or signed char
 		------>			or the types are similar or the signed/unsigned thing from above.
 
 			// NOTE: MAKE SURE TO BE CAREFUL WITH TYPE PUNNING. One wrong move and you're undefined in an instant.
+
+			// ALSO IMPORTANT: This kind of behavior (assuming the pointers don't alias and all that) is called strict aliasing and
+			// it applies more generally than what I've said above. It's got to do with the underlying type of the memory
+			// and with the lifetime of objects in C++, but I'm not going to get into that here. I've got other comments
+			// in other repos that explain it a lot better.
 		*/
 
-		// NOTE: This is still defined behavior though AFAIK,
+		// NOTE: The following is still defined behavior though AFAIK,
 		// because you can cast to whatever pointer you want,
 		// it's simply the use that can cause UB.
 		// Here, we're still accessing the buffer bytes
 		// through char alias, which is well defined.
 		//*(const char**)&buffer += bytesWritten;
+		// We obviously could have also written: (const char*)buffer += bytesWritten;
 
 		byte_buffer += bytesWritten;
 		buffer_size -= bytesWritten;

@@ -23,8 +23,6 @@ inline sioret_t crossplatform_write(int fd, const void* buf, iosize_t count) noe
 using iosize_t = int;
 using sioret_t = int;
 
-using ssize_t = typename std::make_signed<size_t>::type;
-
 inline sioret_t crossplatform_read(int fd, void* buf, iosize_t count) noexcept { return ::_read(fd, buf, count); }
 inline sioret_t crossplatform_write(int fd, const void* buf, iosize_t count) noexcept { return ::_write(fd, buf, count); }
 
