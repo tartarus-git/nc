@@ -14,7 +14,7 @@ endif
 
 CLANG_PREAMBLE := clang++-11 -std=$(CPP_STD) -$(OPTIMIZATION_LEVEL) $(POSSIBLE_WALL) -fno-exceptions -pthread
 
-.PHONY: all unoptimized clean clean_include_swaps
+.PHONY: all unoptimized touch_all clean clean_include_swaps
 
 all: bin/$(BINARY_NAME)
 
@@ -33,6 +33,10 @@ bin/NetworkShepherd.o: NetworkShepherd.cpp $(NETWORK_SHEPHERD_INCLUDES) bin/.dir
 bin/.dirstamp:
 	mkdir -p bin
 	touch bin/.dirstamp
+
+touch_all:
+	touch main.cpp
+	touch NetworkShepherd.cpp
 
 # The normal clean rule ignores swap files in case you have open vim instances. This is respectful to them.
 # Use the clean_include_swaps rule to clean every untracked file. You can do that if you don't have any vim instances open.
