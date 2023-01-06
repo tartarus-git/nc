@@ -1,3 +1,0 @@
-#!/bin/bash
-
-echo 'To uninstall, delete "nc" from installation directory.'
