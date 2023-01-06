@@ -24,7 +24,8 @@ using sockaddr_storage_family_t = short;
 // NOTE: That would be more efficient in some places, but I think in the grand scheme of things,
 // the current way might even be better since we can use it in switch cases without the compiler
 // generating the typical default if checking boiler-plate. Although that could be avoided even with AF_*
-// if the compiler is smart enough, but I don't know if it is in this case. TODO: We would have to change everything to AF_* and look at the assembly to see if the produced code is just as good.
+// if the compiler is smart enough, but I don't know if it is in this case. We would have to change everything to AF_* and look at the assembly to see if the produced code is just as good.
+// The current system is fine though, I like the enum. So we're just gonna leave it like it is.
 enum class IPVersionConstraint : uint8_t {
 	NONE,
 	FOUR,
