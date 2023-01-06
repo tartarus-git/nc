@@ -11,7 +11,7 @@ This program compiles for Windows as well as Linux, which is pretty cool.
 
 ```
 clang++-11 (for Linux)
-C++20 capable MSVC (cl.exe) (for Windows)
+MSVC 19.29 (for Windows)
 git (not just for cloning, the makefile also uses git to clean up the repo)
 make
 bash
