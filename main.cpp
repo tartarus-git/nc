@@ -160,7 +160,14 @@ int parseBacklog(const char* backlogString_raw) noexcept {
 		if (digit > 9) { REPORT_ERROR_AND_EXIT("backlog input string is invalid", EXIT_SUCCESS); }
 
 		result = result * 10 + digit;
+#ifdef PLATFORM_WINDOWS
+#pragma push_macro("max")
+#undef max
+#endif
 		if (result > std::numeric_limits<int>::max()) { REPORT_ERROR_AND_EXIT("backlog input value too large", EXIT_SUCCESS); }
+#ifdef PLATFORM_WINDOWS
+#pragma pop_macro("max")
+#endif
 	}
 
 	return result;
