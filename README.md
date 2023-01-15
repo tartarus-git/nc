@@ -15,11 +15,12 @@ MSVC 19.29 or later (for Windows)
 git (not just for cloning, the makefile also uses git to clean up the repo)
 make
 bash
+(sh (either as itself or as a link to a separate backwards-compatible shell) should be available on every Linux system AFAIK, so no worries here)
 ```
 
 ## Guide For Linux
 
-After cloning the repo (there aren't currently any submodules, but I might add some later so maybe use recursive cloning just in case), go into the directory and run ```make```. As of now, you can also run ```make``` with the normal Bourne Shell (what I mean is that the commands that the makefile contains should also work great with the Bourne Shell), but I might add some bash specific stuff later, so your best bet is to use the bash shell.
+After cloning the repo (there aren't currently any submodules, but I might add some later so maybe use recursive cloning just in case), go into the directory and run ```make```. As of now, ```make``` uses the normal Bourne Shell to execute recipe lines, but I might add some bash specific stuff later and switch to bash, so your best bet is to have bash available when running ```make```.
 
 ## Guide For Windows
 
