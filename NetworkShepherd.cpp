@@ -176,7 +176,7 @@ struct sockaddr_storage construct_sockaddr(const char* node, uint16_t port, IPVe
 			if (info->ai_addr->sa_family == AF_INET6) { *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr; break; }
 			if (info->ai_addr->sa_family == AF_INET) { *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)info->ai_addr; break; }
 
-			if (!info->ai_next) { break; }
+			if (!info->ai_next) { break; }	// TODO: This breaks even when no valid addresses have been found. Is this on purpose based on some documentation thing that you read? It looks like this can lead to this function returning bad addresses in some cases. We should redesign this code in that case to protect against that. Maybe you misunderstood the docs for getaddrinfo. Does it only return IP based things or does it return everything. It seems like it's everything. Do some research.
 			continue;
 		case IPVersionConstraint::FOUR: *(sockaddr_in*)&result_sockaddr = *(sockaddr_in*)info->ai_addr; break;
 		case IPVersionConstraint::SIX: *(sockaddr_in6*)&result_sockaddr = *(sockaddr_in6*)info->ai_addr;
